@@ -11,9 +11,14 @@ ZCode, the DeepSeek desktop app, anything.
 ## Use
 
 1. `start.bat` (starts the server minimized if needed, then the window).
-2. Speak; a ~0.75 s pause ends an utterance and sends it for transcription.
+2. **Push-to-talk (default): hold Ctrl+Alt+Space anywhere** — ZCode, the DeepSeek
+   app, anything — speak, release. Or hold the on-screen TALK button / Space
+   when the window is focused. (Change the combo: `set HAM_HOTKEY=ctrl-alt-v`
+   before launching, or any key like `f8`.)
 3. Paste (Ctrl+V) into ZCode / the DeepSeek app. With auto-copy on, the whole
    current text is already in the clipboard after every utterance.
+   Auto VAD mode (hands-free, a ~0.75 s pause ends an utterance) is a mode
+   toggle in the window; the level meter shows the mic level and its trigger.
 
 Python deps: `pip install sounddevice` (only one; everything else is stdlib).
 

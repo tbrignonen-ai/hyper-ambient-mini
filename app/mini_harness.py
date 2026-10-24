@@ -40,6 +40,10 @@ SAMPLE_RATE = 16000          # what the model wants
 BLOCK_MS = 30                # audio callback granularity
 BLOCKSIZE = SAMPLE_RATE * BLOCK_MS // 1000
 
+# Global hold-to-talk hotkey: keys joined by '-'. Works from ANY app (passive
+# key-state polling; nothing is consumed, nothing is logged).
+HOTKEY = os.environ.get("HAM_HOTKEY", "ctrl-alt-space").lower()
+
 # --- VAD (energy-first, hyper-ambient style: spare the inference) ---------
 SILENCE_TO_END_S = 0.75      # this much trailing quiet ends an utterance
 MIN_SPEECH_S = 0.25          # shorter bursts are ignored (clicks, bumps)
@@ -153,6 +157,22 @@ def is_junk(text: str) -> bool:
     return False
 
 
+# ------------------------------------------------------------ hotkey -----
+VK = {"space": 0x20, "shift": 0x10, "ctrl": 0x11, "alt": 0x18, "win": 0x5B}
+for _i in range(1, 13):
+    VK[f"f{_i}"] = 0x70 + _i - 1
+for _c in "abcdefghijklmnopqrstuvwxyz0123456789":
+    VK[_c] = ord(_c.upper())
+
+
+def hotkey_vks(spec: str) -> list[int] | None:
+    parts = [p.strip() for p in spec.split("-") if p.strip()]
+    if not parts:
+        return None
+    vks = [VK.get(p) for p in parts]
+    return None if any(v is None for v in vks) else vks
+
+
 # --------------------------------------------------------------- the app ---
 class MiniHarness:
     def __init__(self) -> None:
@@ -164,6 +184,7 @@ class MiniHarness:
         self._last_space_press = 0.0              # autorepeat guard
         self.segment_q: "queue.Queue[bytes]" = queue.Queue()
         self.result_q: "queue.Queue[tuple]" = queue.Queue()
+        self.ui_q: "queue.Queue[tuple]" = queue.Queue()   # cross-thread UI cmds
         self.frames: list[bytes] = []             # current utterance buffer
         self.in_speech = False
         self.silence_run = 0.0
@@ -180,8 +201,32 @@ class MiniHarness:
         self._build_ui()
         self._start_worker()
         self._start_mic(self.device_index)
+        self._start_hotkey(HOTKEY)
         self.root.after(200, self._focus_for_ptt)
         threading.Thread(target=self._probe_server, daemon=True).start()
+
+    def _start_hotkey(self, spec: str) -> None:
+        """Global hold-to-talk: poll key state from a thread; any app in focus."""
+        vks = hotkey_vks(spec)
+        if not vks:
+            self._set_status(f"⚠ bad HAM_HOTKEY spec: {spec}")
+            return
+        self.hotkey_label = spec.upper().replace("-", "+")
+
+        def poll() -> None:
+            import ctypes
+            user32 = ctypes.windll.user32
+            held = False
+            while True:
+                time.sleep(0.02)
+                try:
+                    down = all(user32.GetAsyncKeyState(v) & 0x8000 for v in vks)
+                except Exception:
+                    return
+                if down != held:
+                    held = down
+                    self.ui_q.put(("ptt", down))
+        threading.Thread(target=poll, daemon=True).start()
 
     def _probe_server(self) -> None:
         self.server_ok = self.client.ping()
@@ -215,12 +260,18 @@ class MiniHarness:
         talk = tk.Frame(self.root, bg="#14171c")
         talk.pack(fill="x", padx=8)
         self.btn_talk = tk.Label(
-            talk, text="⏺  TALK  (hold me — or hold Space)",
-            font=("Segoe UI", 13, "bold"), bg="#7a2040", fg="#ffe8ec",
+            talk, text="⏺  TALK  — hold me, hold Space, or hold Ctrl+Alt+Space (works anywhere)",
+            font=("Segoe UI", 12, "bold"), bg="#7a2040", fg="#ffe8ec",
             padx=14, pady=10, cursor="hand2")
         self.btn_talk.pack(fill="x")
-        self.btn_talk.bind("<ButtonPress-1>", lambda e: self.ptt_start())
-        self.btn_talk.bind("<ButtonRelease-1>", lambda e: self.ptt_stop())
+        # implicit grab: once pressed, the release reaches us even if the
+        # pointer slides off the button before letting go
+        self.btn_talk.bind("<ButtonPress-1>",
+                           lambda e: (self.ptt_start(), self.btn_talk.grab_set()))
+        self.btn_talk.bind("<ButtonRelease-1>",
+                           lambda e: self._ptt_release())
+        self.root.bind("<ButtonRelease-1>", lambda e: self._ptt_release())
+        self.root.bind("<Escape>", lambda e: self._ptt_release())
 
         bar = tk.Frame(self.root, bg="#14171c")
         bar.pack(fill="x", padx=8, pady=(6, 0))
@@ -395,11 +446,20 @@ class MiniHarness:
         self.btn_talk.configure(bg="#a02c4a", text="🔴  RECORDING — release to send")
         self._set_status()
 
+    def _ptt_release(self) -> None:
+        try:
+            self.btn_talk.grab_release()
+        except Exception:
+            pass
+        self.ptt_stop()
+
     def ptt_stop(self) -> None:
         if not self.ptt_active:
             return
         self.ptt_active = False
-        self.btn_talk.configure(bg="#7a2040", text="⏺  TALK  (hold me — or hold Space)")
+        self.btn_talk.configure(
+            bg="#7a2040",
+            text="⏺  TALK  — hold me, hold Space, or hold Ctrl+Alt+Space (works anywhere)")
         self._flush_utterance()
         self._set_status()
 
@@ -435,6 +495,13 @@ class MiniHarness:
 
     # ---------------- UI plumbing ----------------
     def _poll_results(self) -> None:
+        try:
+            while True:
+                kind, payload = self.ui_q.get_nowait()
+                if kind == "ptt":
+                    (self.ptt_start if payload else self._ptt_release)()
+        except queue.Empty:
+            pass
         try:
             while True:
                 kind, text, latency, dur = self.result_q.get_nowait()
@@ -485,7 +552,9 @@ class MiniHarness:
         if not self.mic_alive:
             state, color = "mic failed", "#ff8080"
         elif self.mode.get() == "ptt":
+            hk = f" · hold {getattr(self, 'hotkey_label', 'Ctrl+Alt+Space')} anywhere" if self.server_ok else ""
             state = "🔴 recording" if self.ptt_active else "⏺ push-to-talk ready"
+            state += hk
             color = "#ff9ab0" if self.ptt_active else "#7ee787"
         elif self.listening.is_set():
             state, color = "● auto listening", "#7ee787"
