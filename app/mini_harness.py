@@ -52,7 +52,8 @@ JUNK_PATTERNS = (
 # ------------------------------------------------------------ audio utils ---
 def rms_db_of(raw: bytes) -> float:
     """RMS of an int16 frame, in dBFS-ish arbitrary units. array module: no numpy."""
-    samples = array.array("h", raw)
+    samples = array.array("h")
+    samples.frombytes(bytes(raw))
     if not samples:
         return 0.0
     acc = 0
@@ -65,7 +66,8 @@ def resample_to_16k(raw: bytes, src_rate: int) -> bytes:
     """Linear resample int16 mono to 16 kHz (only used if the mic refuses 16k)."""
     if src_rate == SAMPLE_RATE:
         return raw
-    in_s = array.array("h", raw)
+    in_s = array.array("h")
+    in_s.frombytes(bytes(raw))
     step = src_rate / SAMPLE_RATE
     n_out = int(len(in_s) / step)
     out = array.array("h", bytes(2 * n_out))
@@ -126,7 +128,17 @@ def is_junk(text: str) -> bool:
     t = " ".join(text.lower().split())
     if len(t) < 2:
         return True
-    return any(p in t for p in JUNK_PATTERNS)
+    if any(p in t for p in JUNK_PATTERNS):
+        return True
+    # Repeated-token hallucination ("no, no, no", "let's, let's, let's"):
+    # same 1-3 word group repeated 3+ times is never real dictation.
+    words = [w.strip(".,!?") for w in t.split() if w.strip(".,!?")]
+    for n in (1, 2, 3):
+        if len(words) >= n * 3:
+            groups = [tuple(words[i:i + n]) for i in range(0, len(words) - n + 1, n)]
+            if len(groups) >= 3 and len(set(groups)) == 1:
+                return True
+    return False
 
 
 # --------------------------------------------------------------- the app ---
@@ -146,9 +158,15 @@ class MiniHarness:
         self.warmup_blocks = 0
         self.copied_upto = "1.0"        # text index: everything before is copied
         self.stats = {"n": 0, "ms": 0.0}
+        self.server_ok: bool | None = None
         self._build_ui()
         self._start_worker()
         self._start_mic()
+        threading.Thread(target=self._probe_server, daemon=True).start()
+
+    def _probe_server(self) -> None:
+        self.server_ok = self.client.ping()
+        self.root.after(0, self._set_status)
 
     # ---------------- UI ----------------
     def _build_ui(self) -> None:
@@ -311,7 +329,8 @@ class MiniHarness:
         else:
             state, color = "⏸ paused", "#f0c674"
         n, ms = self.stats["n"], self.stats["ms"]
-        srv = "server ok" if self.client.ping is not None else ""
+        srv = "server ok" if self.server_ok else (
+            "server DOWN — run start.bat" if self.server_ok is False else "checking server…")
         self.status.configure(
             text=f"{state}   ·   {srv} {SERVER_URL.split('//')[1]}   ·   "
                  f"{n} utterances, last {ms:.0f} ms   {extra}",
