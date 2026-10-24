@@ -18,6 +18,7 @@ import io
 import json
 import os
 import queue
+import socket
 import sys
 import threading
 import time
@@ -54,23 +55,25 @@ JUNK_PATTERNS = (
     "abonnez vous", "merci d avoir regarde", "subtitle", "www",
 )
 
-# --- palette: indigo / violet, amber + teal accents -----------------------
-BG_TOP = (0x1e, 0x21, 0x45)  # gradient, top (indigo)
-BG_BOT = (0x12, 0x14, 0x2b)  # gradient, bottom (deep indigo)
-PANEL = "#20244a"            # transcript / meter fields
-PANEL_HI = "#333868"         # buttons
-PANEL_HOVER = "#3d4380"
-EDGE = "#3d4380"             # panel outline / keycap rim
-TEXT = "#eef0ff"
-DIM = "#9ba3d8"
-DIM2 = "#6b73b8"
-TEAL = "#5ad6b8"             # ready / good
-PINK = "#ff8fa8"             # recording
-AMBER = "#c98a2e"            # primary action (copy)
-AMBER_HI = "#e0a03e"
-AMBER_FG = "#1f1503"
-TALK_IDLE, TALK_HOVER = "#3d2c66", "#4b377f"    # violet
-REC_A, REC_B = "#c13a63", "#a02c4e"             # pulsing recording pair
+# --- palette: light lavender, violet + amber accents ----------------------
+BG_TOP = (0xee, 0xf0, 0xff)  # gradient, top (pale lavender)
+BG_BOT = (0xdd, 0xe3, 0xff)  # gradient, bottom (soft periwinkle)
+PANEL = "#ffffff"            # transcript field
+CHIP = "#dfe4ff"             # quiet buttons / chips
+CHIP_HOVER = "#cdd6ff"
+EDGE = "#b9c3f5"             # panel outline
+TEXT = "#241f52"
+DIM = "#5c61a8"
+DIM2 = "#8a8fc9"
+TEAL = "#0e8f6f"             # ready / good
+PINK = "#d6336e"             # recording
+AMBER = "#ff8f1f"            # primary action (copy)
+AMBER_HI = "#ffa64d"
+AMBER_FG = "#ffffff"
+VIOLET = "#7c4dff"
+TALK_IDLE, TALK_HOVER = "#6a3de8", "#7c4dff"    # violet
+REC_A, REC_B = "#e8386b", "#c92557"             # pulsing recording pair
+PANEL_HI, PANEL_HOVER = CHIP, CHIP_HOVER         # legacy names
 PLACEHOLDER = "hold F9, speak, release — then Ctrl+V anywhere"
 
 
@@ -276,6 +279,16 @@ def _make_dot_icon(size: int = 32) -> int:
 # --------------------------------------------------------------- the app ---
 class MiniHarness:
     def __init__(self) -> None:
+        # single instance: a second copy would fight over F9 and the clipboard
+        self._lock = socket.socket()
+        try:
+            self._lock.bind(("127.0.0.1", 8079))
+        except OSError:
+            _user32.MessageBoxW(
+                None, "hyperambient-mini is already running.\n"
+                      "Look for the red dot in the Windows tray.",
+                "hyperambient-mini", 0x30)
+            sys.exit(0)
         self.client = ParakeetClient(SERVER_URL)
         self.root = tk.Tk()
         self.ptt_active = False
@@ -361,13 +374,13 @@ class MiniHarness:
         head.pack(fill="x", padx=16, pady=(12, 6))
         tk.Label(head, text="hyperambient", bg=bg_flat, fg=TEXT,
                  font=(f_disp, 12, "bold")).pack(side="left")
-        tk.Label(head, text="mini", bg=bg_flat, fg=AMBER_HI,
+        tk.Label(head, text="mini", bg=bg_flat, fg=VIOLET,
                  font=(f_disp, 12, "bold italic")).pack(side="left")
         tk.Label(head, text="hold to talk", bg=bg_flat, fg=DIM2,
                  font=(f_main, 9)).pack(side="right", padx=(0, 10))
-        self.keycap = tk.Label(head, text=" F9 ", bg=PANEL, fg=AMBER_HI,
+        self.keycap = tk.Label(head, text=" F9 ", bg=TALK_IDLE, fg="#ffffff",
                                padx=8, pady=2, font=(f_semi, 9),
-                               highlightthickness=1, highlightbackground=EDGE)
+                               highlightthickness=1, highlightbackground=TALK_IDLE)
         self.keycap.pack(side="right")
 
         self.status = tk.Label(self.root, text="starting…", anchor="w",
@@ -379,7 +392,7 @@ class MiniHarness:
         meter.pack(fill="x", padx=16, pady=(6, 0))
         tk.Label(meter, text="MIC", bg=bg_flat, fg=DIM2,
                  font=(f_semi, 7)).pack(side="left")
-        self.meter = tk.Canvas(meter, height=8, bg=PANEL, highlightthickness=0)
+        self.meter = tk.Canvas(meter, height=8, bg="#e7ebff", highlightthickness=0)
         self.meter.pack(fill="x", expand=True, side="left", padx=(8, 8))
         self.meter_label = tk.Label(meter, text="", bg=bg_flat, fg=DIM,
                                     font=(f_main, 8), width=8, anchor="e")
@@ -391,14 +404,14 @@ class MiniHarness:
                             highlightthickness=1, highlightbackground=EDGE,
                             highlightcolor=PANEL_HOVER)
         self.text.pack(fill="both", expand=True, padx=16, pady=8)
-        self.text.tag_configure("placeholder", foreground="#8a91c9",
+        self.text.tag_configure("placeholder", foreground="#9aa0d8",
                                 font=(f_main, 13, "italic"))
 
         # talk button
         self.btn_talk = tk.Label(
             self.root,
             text="⏺   Hold F9 and speak  —  release to send",
-            font=(f_semi, 12), bg=TALK_IDLE, fg="#e6d9ff",
+            font=(f_semi, 12), bg=TALK_IDLE, fg="#ffffff",
             padx=14, pady=14, cursor="hand2")
         self.btn_talk.pack(fill="x", padx=16)
         self.btn_talk.bind("<Enter>", lambda e: self._talk_hover(True))
@@ -437,7 +450,7 @@ class MiniHarness:
 
         self.autocopy = tk.BooleanVar(value=True)
         tk.Checkbutton(bar, text="auto-copy", variable=self.autocopy,
-                       bg=bg_flat, fg=DIM, selectcolor=PANEL_HI,
+                       bg=bg_flat, fg=DIM, selectcolor="#ffffff",
                        activebackground=bg_flat, activeforeground=TEXT,
                        font=(f_main, 9)).pack(side="right")
 
@@ -586,7 +599,7 @@ class MiniHarness:
             return
         self.ptt_active = False
         self.btn_talk.configure(
-            bg=TALK_IDLE, fg="#e6d9ff",
+            bg=TALK_IDLE, fg="#ffffff",
             text="⏺   Hold F9 and speak  —  release to send")
         self._flush_utterance()
         self._set_status()
@@ -665,12 +678,12 @@ class MiniHarness:
             return
         self.meter.delete("all")
         frac = min(self.last_level / METER_RANGE, 1.0)
-        color = "#5ad6b8" if frac < 0.55 else "#e0b34c" if frac < 0.85 else "#e05a5a"
+        color = "#0e8f6f" if frac < 0.55 else "#c98a00" if frac < 0.85 else "#d64545"
         if frac > 0.01:
             self.meter.create_rectangle(0, 0, int(w * frac), 8, fill=color, width=0)
-        hint = "SILENT — check device / privacy" if self.zero_blocks > 100 \
-            else f"{self.last_level:.0f}"
-        self.meter_label.configure(text=hint)
+        silent = self.zero_blocks > 100
+        hint = "SILENT — check device / privacy" if silent else f"{self.last_level:.0f}"
+        self.meter_label.configure(text=hint, fg="#d64545" if silent else DIM)
 
     def _append(self, s: str) -> None:
         self.text.configure(state="normal")
