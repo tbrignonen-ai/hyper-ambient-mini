@@ -1,0 +1,6 @@
+models/*.gguf
+bin/
+server.log
+transcript.txt
+__pycache__/
+.env*
