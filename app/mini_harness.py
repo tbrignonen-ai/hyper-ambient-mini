@@ -185,6 +185,94 @@ def hotkey_vks(spec: str) -> list[int] | None:
     return None if any(v is None for v in vks) else vks
 
 
+# --------------------------------------------------------- tray (win32) ---
+import ctypes
+from ctypes import byref
+from ctypes import wintypes
+
+_user32 = ctypes.windll.user32
+_kernel32 = ctypes.windll.kernel32
+_gdi32 = ctypes.windll.gdi32
+_shell32 = ctypes.windll.shell32
+
+WM_APP = 0x8000
+TRAY_CALLBACK = WM_APP + 1
+WM_LBUTTONUP, WM_LBUTTONDBLCLK, WM_RBUTTONUP = 0x0202, 0x0203, 0x0205
+NIM_ADD, NIM_DELETE = 0, 2
+NIF_MESSAGE, NIF_ICON, NIF_TIP = 0x01, 0x02, 0x04
+_HWND_MESSAGE = wintypes.HWND(-3)
+_LRESULT = ctypes.c_ssize_t
+
+TRAY_WNDPROC = ctypes.WINFUNCTYPE(
+    _LRESULT, wintypes.HWND, wintypes.UINT,
+    wintypes.WPARAM, wintypes.LPARAM)
+
+
+class _WNDCLASSW(ctypes.Structure):
+    _fields_ = [("style", wintypes.UINT), ("lpfnWndProc", TRAY_WNDPROC),
+                ("cbClsExtra", ctypes.c_int), ("cbWndExtra", ctypes.c_int),
+                ("hInstance", wintypes.HINSTANCE), ("hIcon", wintypes.HICON),
+                ("hCursor", ctypes.c_void_p), ("hbrBackground", wintypes.HBRUSH),
+                ("lpszMenuName", wintypes.LPCWSTR),
+                ("lpszClassName", wintypes.LPCWSTR)]
+
+
+class _ICONINFO(ctypes.Structure):
+    _fields_ = [("fIcon", wintypes.BOOL), ("xHotspot", wintypes.DWORD),
+                ("yHotspot", wintypes.DWORD), ("hbmMask", wintypes.HBITMAP),
+                ("hbmColor", wintypes.HBITMAP)]
+
+
+class _NOTIFYICONDATAW(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("hWnd", wintypes.HWND),
+                ("uID", wintypes.UINT), ("uFlags", wintypes.UINT),
+                ("uCallbackMessage", wintypes.UINT), ("hIcon", wintypes.HICON),
+                ("szTip", wintypes.WCHAR * 128), ("dwState", wintypes.DWORD),
+                ("dwStateMask", wintypes.DWORD),
+                ("szInfo", wintypes.WCHAR * 256), ("uVersion", wintypes.UINT),
+                ("szInfoTitle", wintypes.WCHAR * 64),
+                ("dwInfoFlags", wintypes.DWORD),
+                ("guidItem", ctypes.c_byte * 16), ("hBalloonIcon", wintypes.HICON)]
+
+
+# explicit signatures: on 64-bit windows, default c_int restypes truncate handles
+_kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+_kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+_user32.CreateWindowExW.restype = wintypes.HWND
+_user32.CreateWindowExW.argtypes = [
+    wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID]
+_user32.DefWindowProcW.restype = _LRESULT
+_user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT,
+                                   wintypes.WPARAM, wintypes.LPARAM]
+_user32.RegisterClassW.restype = wintypes.ATOM
+_user32.RegisterClassW.argtypes = [ctypes.c_void_p]
+_shell32.Shell_NotifyIconW.restype = wintypes.BOOL
+_shell32.Shell_NotifyIconW.argtypes = [wintypes.DWORD, ctypes.c_void_p]
+_gdi32.CreateBitmap.restype = wintypes.HBITMAP
+_gdi32.CreateBitmap.argtypes = [ctypes.c_int, ctypes.c_int,
+                                wintypes.UINT, wintypes.UINT, ctypes.c_void_p]
+_user32.CreateIconIndirect.restype = wintypes.HICON
+_user32.CreateIconIndirect.argtypes = [ctypes.c_void_p]
+
+
+def _make_dot_icon(size: int = 32) -> int:
+    """Red recording-dot icon, drawn by hand: no resource files needed."""
+    color = bytearray(size * size * 4)                  # BGRA
+    mask = bytearray(b"\xff" * (size * size // 8))      # 1bpp, 1 = transparent
+    for y in range(size):
+        for x in range(size):
+            if (x - size / 2 + 0.5) ** 2 + (y - size / 2 + 0.5) ** 2 <= (size * 0.42) ** 2:
+                i = y * size + x
+                color[i * 4:i * 4 + 4] = b"\x5a\x2c\xa7\xff"   # BGRA #a72c5a
+                mask[i // 8] &= ~(0x80 >> (i % 8)) & 0xFF
+    hbm_color = _gdi32.CreateBitmap(size, size, 1, 32, bytes(color))
+    hbm_mask = _gdi32.CreateBitmap(size, size, 1, 1, bytes(mask))
+    ii = _ICONINFO(True, 0, 0, hbm_mask, hbm_color)
+    return _user32.CreateIconIndirect(byref(ii))
+
+
 # --------------------------------------------------------------- the app ---
 class MiniHarness:
     def __init__(self) -> None:
@@ -204,7 +292,6 @@ class MiniHarness:
         self.noise_floor = 120.0
         self.warmup_blocks = 0
         self.last_level = 0.0
-        self.meter_peak = 0.0
         self.zero_blocks = 0
         self.mic_alive = True
         self._placeholder_on = False
@@ -218,6 +305,7 @@ class MiniHarness:
         self._start_hotkey(HOTKEY)
         self.root.after(200, self._focus_for_ptt)
         threading.Thread(target=self._probe_server, daemon=True).start()
+        self._init_tray()
 
     def _probe_server(self) -> None:
         self.server_ok = self.client.ping()
@@ -253,6 +341,10 @@ class MiniHarness:
         self.root.minsize(560, 400)
         self.root.attributes("-topmost", True)
         self.root.configure(bg=BG)
+        # subtle gradient backdrop: visible in the gutters around the panels
+        self.bg = tk.Canvas(self.root, highlightthickness=0, bg=BG)
+        self.bg.place(x=0, y=0, relwidth=1, relheight=1)
+        self.bg.bind("<Configure>", self._paint_bg)
         self.root.option_add("*TCombobox*Listbox.background", PANEL_HI)
         self.root.option_add("*TCombobox*Listbox.foreground", TEXT)
         self.root.option_add("*TCombobox*Listbox.selectBackground", "#3a4d73")
@@ -361,6 +453,7 @@ class MiniHarness:
         # Space = push-to-talk while the window has focus (autorepeat-guarded)
         self.root.bind("<KeyPress-space>", self._space_press)
         self.root.bind("<KeyRelease-space>", self._space_release)
+        self.root.bind("<Unmap>", self._on_unmap)
         self.root.after(150, self._poll_results)
         self._set_placeholder()
 
@@ -606,13 +699,10 @@ class MiniHarness:
         if w < 20:
             return
         self.meter.delete("all")
-        self.meter_peak = max(self.last_level, self.meter_peak * 0.90)
         frac = min(self.last_level / METER_RANGE, 1.0)
         color = "#69d58c" if frac < 0.55 else "#e0b34c" if frac < 0.85 else "#e05a5a"
         if frac > 0.01:
             self.meter.create_rectangle(0, 0, int(w * frac), 8, fill=color, width=0)
-        px = int(w * min(self.meter_peak / METER_RANGE, 1.0))
-        self.meter.create_line(px, 0, px, 8, fill="#e6e9ee", width=1)
         if self.mode.get() == "auto" and self.warmup_blocks >= ADAPT_SECONDS * 1000 / BLOCK_MS:
             thr = max(self.noise_floor * NOISE_MULT, AGC_FLOOR) / METER_RANGE
             if 0 < thr < 1:
@@ -702,8 +792,106 @@ class MiniHarness:
         self.stats = {"n": 0, "ms": 0.0}
         self._set_placeholder()
 
+    # ---------------- tray ----------------
+    def _init_tray(self) -> None:
+        """Own a tray icon via a message-only window; no extra dependencies."""
+        try:
+            self._wm_taskbarcreated = _user32.RegisterWindowMessageW("TaskbarCreated")
+            self._wndproc = TRAY_WNDPROC(self._tray_wndproc)
+            wc = _WNDCLASSW()
+            wc.lpfnWndProc = self._wndproc
+            wc.hInstance = _kernel32.GetModuleHandleW(None)
+            wc.lpszClassName = "HyperAmbientMiniTray"
+            if not _user32.RegisterClassW(byref(wc)):
+                raise OSError("RegisterClassW failed")
+            self._tray_hwnd = _user32.CreateWindowExW(
+                0, "HyperAmbientMiniTray", "ham-tray", 0, 0, 0, 0, 0,
+                _HWND_MESSAGE, None, wc.hInstance, None)
+            self._tray_icon = _make_dot_icon()
+            self._nid = _NOTIFYICONDATAW()
+            self._nid.cbSize = ctypes.sizeof(_NOTIFYICONDATAW)
+            self._nid.hWnd = self._tray_hwnd
+            self._nid.uID = 1
+            self._nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
+            self._nid.uCallbackMessage = TRAY_CALLBACK
+            self._nid.hIcon = self._tray_icon
+            self._nid.szTip = "hyperambient-mini — hold F9 to talk"
+            ok = self._tray_add()
+            print(f"tray icon added: {ok}", flush=True)
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            print(f"tray unavailable ({e}); window-only mode", flush=True)
+
+    def _tray_add(self) -> bool:
+        return bool(_shell32.Shell_NotifyIconW(NIM_ADD, byref(self._nid)))
+
+    def _tray_wndproc(self, hwnd, msg, wparam, lparam):
+        try:
+            if msg == TRAY_CALLBACK:
+                if lparam in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
+                    self.root.after(0, self._tray_toggle)
+                elif lparam == WM_RBUTTONUP:
+                    self.root.after(0, self._show_tray_menu)
+                return 0
+            if msg == self._wm_taskbarcreated:      # explorer restarted
+                self._tray_add()
+                return 0
+        except Exception:
+            pass
+        return _user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+    def _tray_toggle(self) -> None:
+        if self.root.state() == "withdrawn":
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+        else:
+            self._hide_to_tray()
+
+    def _hide_to_tray(self) -> None:
+        self.root.withdraw()
+
+    def _show_tray_menu(self) -> None:
+        m = tk.Menu(self.root, tearoff=0, bg=PANEL_HI, fg=TEXT,
+                    activebackground="#3a4d73", activeforeground="#ffffff",
+                    font=("Segoe UI", 9))
+        m.add_command(label="Show / hide", command=self._tray_toggle)
+        m.add_separator()
+        m.add_command(label="Quit", command=self._quit)
+        try:
+            m.tk_popup(self.root.winfo_pointerx(), self.root.winfo_pointery(), 0)
+        finally:
+            m.grab_release()
+
+    def _on_unmap(self, _event) -> None:
+        # the minimize button hides to tray instead of clogging the taskbar
+        if self.root.state() == "iconic":
+            self.root.withdraw()
+
+    def _quit(self) -> None:
+        try:
+            _shell32.Shell_NotifyIconW(NIM_DELETE, byref(self._nid))
+        except Exception:
+            pass
+        self._close()
+
+    def _paint_bg(self, _event=None) -> None:
+        c, w, h = self.bg, self.bg.winfo_width(), self.bg.winfo_height()
+        if w < 2 or h < 2:
+            return
+        c.delete("grad")
+        top, bot, steps = (0x18, 0x1e, 0x28), (0x0d, 0x10, 0x15), 48
+        for i in range(steps):
+            t = i / (steps - 1)
+            col = "#%02x%02x%02x" % tuple(
+                int(a + (b - a) * t) for a, b in zip(top, bot))
+            y0 = int(h * i / steps)
+            c.create_rectangle(0, y0, w, int(h * (i + 1) / steps) + 1,
+                               fill=col, width=0, tags="grad")
+        c.tag_lower("grad")
+
     def run(self) -> None:
-        self.root.protocol("WM_DELETE_WINDOW", self._close)
+        self.root.protocol("WM_DELETE_WINDOW", self._hide_to_tray)
         self.root.mainloop()
 
     def _close(self) -> None:
