@@ -1,12 +1,12 @@
-141 INFO: PyInstaller: 6.22.3, contrib hooks: 2026.9
-141 INFO: Python: 3.13.14
-162 INFO: Platform: Windows-11-10.0.26200-SP0
-162 INFO: Python environment: C:\Users\thoma\AppData\Local\Programs\Python\Python313
-162 INFO: wrote C:\Users\thoma\.zcode\workspace\default\hyperambient-mini\HyperAmbientMini.spec
-165 INFO: Removing temporary files and cleaning cache in C:\Users\thoma\AppData\Local\pyinstaller
-172 WARNING: collect_data_files - skipping data collection for module 'sounddevice' as it is not a package.
-172 WARNING: collect_dynamic_libs - skipping library collection for module 'sounddevice' as it is not a package.
-3861 INFO: Module search paths (PYTHONPATH):
+152 INFO: PyInstaller: 6.22.3, contrib hooks: 2026.9
+153 INFO: Python: 3.13.14
+173 INFO: Platform: Windows-11-10.0.26200-SP0
+173 INFO: Python environment: C:\Users\thoma\AppData\Local\Programs\Python\Python313
+174 INFO: wrote C:\Users\thoma\.zcode\workspace\default\hyperambient-mini\HyperAmbientMini.spec
+176 INFO: Removing temporary files and cleaning cache in C:\Users\thoma\AppData\Local\pyinstaller
+183 WARNING: collect_data_files - skipping data collection for module 'sounddevice' as it is not a package.
+183 WARNING: collect_dynamic_libs - skipping library collection for module 'sounddevice' as it is not a package.
+1556 INFO: Module search paths (PYTHONPATH):
 ['C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Scripts\\pyinstaller.exe',
  'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\python313.zip',
  'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\DLLs',
@@ -18,69 +18,69 @@
  'C:\\Users\\thoma\\AppData\\Roaming\\Python\\Python313\\site-packages\\pythonwin',
  'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages',
  'C:\\Users\\thoma\\.zcode\\workspace\\default\\hyperambient-mini\\app']
-5068 INFO: Appending 'datas' from .spec
-5070 INFO: checking Analysis
-5070 INFO: Building Analysis because Analysis-00.toc is non existent
-5070 INFO: Looking for Python shared library...
-5070 INFO: Using Python shared library: C:\Users\thoma\AppData\Local\Programs\Python\Python313\python313.dll
-5070 INFO: Running Analysis Analysis-00.toc
-5070 INFO: Target bytecode optimization level: 0
-5070 INFO: Initializing module dependency graph...
-5072 INFO: Initializing module graph hook caches...
-5110 INFO: Analyzing modules for base_library.zip ...
-6255 INFO: Processing standard module hook 'hook-encodings.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
-6896 INFO: Processing standard module hook 'hook-math.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
-8383 INFO: Processing standard module hook 'hook-pickle.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
-9676 INFO: Processing standard module hook 'hook-heapq.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
-11023 INFO: Caching module dependency graph...
-11048 INFO: Analyzing C:\Users\thoma\.zcode\workspace\default\hyperambient-mini\app\mini_harness.py
-11506 INFO: Processing standard module hook 'hook-platform.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
-11545 INFO: Processing standard module hook 'hook-sysconfig.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
-11556 INFO: Processing standard module hook 'hook-_ctypes.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
-11600 INFO: Processing standard module hook 'hook-sounddevice.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
-11713 INFO: Processing standard module hook 'hook-numpy.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
-12692 INFO: Processing standard module hook 'hook-difflib.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
-12983 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
-13112 INFO: Processing standard module hook 'hook-xml.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
-15074 INFO: Processing standard module hook 'hook-webbrowser.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
-16176 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
-16179 INFO: SetuptoolsInfo: initializing cached setuptools info...
-17678 INFO: Processing standard module hook 'hook-charset_normalizer.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
-18175 INFO: Processing pre-find-module-path hook 'hook-tkinter.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find_module_path'
-18176 INFO: TclTkInfo: initializing cached Tcl/Tk info...
-18460 INFO: Processing standard module hook 'hook-_tkinter.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
-18531 INFO: Processing module hooks (post-graph stage)...
-18646 INFO: Processing standard module hook 'hook-_tkinter.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
-18654 INFO: Performing binary vs. data reclassification (944 entries)
-24969 INFO: Looking for ctypes DLLs
-24997 INFO: Analyzing run-time hooks ...
-24999 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
-25000 INFO: Including run-time hook 'pyi_rth__tkinter.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
-25001 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
-25003 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
-25021 INFO: Creating base_library.zip...
-25034 INFO: Looking for dynamic libraries
-25683 INFO: Extra DLL search directories (AddDllDirectory): ['C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\numpy.libs']
-25683 INFO: Extra DLL search directories (PATH): []
-26278 INFO: Warnings written to C:\Users\thoma\.zcode\workspace\default\hyperambient-mini\build\HyperAmbientMini\warn-HyperAmbientMini.txt
-26299 INFO: Graph cross-reference written to C:\Users\thoma\.zcode\workspace\default\hyperambient-mini\build\HyperAmbientMini\xref-HyperAmbientMini.html
-26323 INFO: checking PYZ
-26323 INFO: Building PYZ because PYZ-00.toc is non existent
-26323 INFO: Building PYZ (ZlibArchive) C:\Users\thoma\.zcode\workspace\default\hyperambient-mini\build\HyperAmbientMini\PYZ-00.pyz
-26667 INFO: Building PYZ (ZlibArchive) C:\Users\thoma\.zcode\workspace\default\hyperambient-mini\build\HyperAmbientMini\PYZ-00.pyz completed successfully.
-26683 INFO: checking PKG
-26684 INFO: Building PKG because PKG-00.toc is non existent
-26684 INFO: Building PKG (CArchive) HyperAmbientMini.pkg
-31491 INFO: Building PKG (CArchive) HyperAmbientMini.pkg completed successfully.
-31502 INFO: Bootloader C:\Users\thoma\AppData\Local\Programs\Python\Python313\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\runw.exe
-31502 INFO: checking EXE
-31502 INFO: Building EXE because EXE-00.toc is non existent
-31502 INFO: Building EXE from EXE-00.toc
-31502 INFO: Copying bootloader EXE to C:\Users\thoma\.zcode\workspace\default\hyperambient-mini\dist\HyperAmbientMini.exe
-31602 INFO: Copying icon to EXE
-31646 INFO: Copying 0 resources to EXE
-31646 INFO: Embedding manifest in EXE
-31696 INFO: Appending PKG archive to EXE
-31864 INFO: Fixing EXE headers
-32217 INFO: Building EXE from EXE-00.toc completed successfully.
-32232 INFO: Build complete! The results are available in: C:\Users\thoma\.zcode\workspace\default\hyperambient-mini\dist
+1922 INFO: Appending 'datas' from .spec
+1922 INFO: checking Analysis
+1923 INFO: Building Analysis because Analysis-00.toc is non existent
+1923 INFO: Looking for Python shared library...
+1923 INFO: Using Python shared library: C:\Users\thoma\AppData\Local\Programs\Python\Python313\python313.dll
+1923 INFO: Running Analysis Analysis-00.toc
+1923 INFO: Target bytecode optimization level: 0
+1923 INFO: Initializing module dependency graph...
+1924 INFO: Initializing module graph hook caches...
+1933 INFO: Analyzing modules for base_library.zip ...
+2815 INFO: Processing standard module hook 'hook-math.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+3214 INFO: Processing standard module hook 'hook-encodings.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+4848 INFO: Processing standard module hook 'hook-pickle.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+6471 INFO: Processing standard module hook 'hook-heapq.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+7060 INFO: Caching module dependency graph...
+7115 INFO: Analyzing C:\Users\thoma\.zcode\workspace\default\hyperambient-mini\app\mini_harness.py
+7644 INFO: Processing standard module hook 'hook-platform.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+7701 INFO: Processing standard module hook 'hook-sysconfig.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+7708 INFO: Processing standard module hook 'hook-_ctypes.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+7786 INFO: Processing standard module hook 'hook-sounddevice.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+7856 INFO: Processing standard module hook 'hook-numpy.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+8554 INFO: Processing standard module hook 'hook-difflib.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+8817 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+8929 INFO: Processing standard module hook 'hook-xml.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+10932 INFO: Processing standard module hook 'hook-webbrowser.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+11727 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+11731 INFO: SetuptoolsInfo: initializing cached setuptools info...
+13062 INFO: Processing standard module hook 'hook-charset_normalizer.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+13470 INFO: Processing pre-find-module-path hook 'hook-tkinter.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find_module_path'
+13472 INFO: TclTkInfo: initializing cached Tcl/Tk info...
+13918 INFO: Processing standard module hook 'hook-_tkinter.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+13993 INFO: Processing module hooks (post-graph stage)...
+14056 INFO: Processing standard module hook 'hook-_tkinter.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+14068 INFO: Performing binary vs. data reclassification (944 entries)
+14237 INFO: Looking for ctypes DLLs
+14289 INFO: Analyzing run-time hooks ...
+14291 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+14294 INFO: Including run-time hook 'pyi_rth__tkinter.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+14295 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+14298 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from 'C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+14328 INFO: Creating base_library.zip...
+14353 INFO: Looking for dynamic libraries
+14735 INFO: Extra DLL search directories (AddDllDirectory): ['C:\\Users\\thoma\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\numpy.libs']
+14735 INFO: Extra DLL search directories (PATH): []
+15749 INFO: Warnings written to C:\Users\thoma\.zcode\workspace\default\hyperambient-mini\build\HyperAmbientMini\warn-HyperAmbientMini.txt
+15773 INFO: Graph cross-reference written to C:\Users\thoma\.zcode\workspace\default\hyperambient-mini\build\HyperAmbientMini\xref-HyperAmbientMini.html
+15843 INFO: checking PYZ
+15843 INFO: Building PYZ because PYZ-00.toc is non existent
+15843 INFO: Building PYZ (ZlibArchive) C:\Users\thoma\.zcode\workspace\default\hyperambient-mini\build\HyperAmbientMini\PYZ-00.pyz
+16424 INFO: Building PYZ (ZlibArchive) C:\Users\thoma\.zcode\workspace\default\hyperambient-mini\build\HyperAmbientMini\PYZ-00.pyz completed successfully.
+16451 INFO: checking PKG
+16451 INFO: Building PKG because PKG-00.toc is non existent
+16451 INFO: Building PKG (CArchive) HyperAmbientMini.pkg
+25185 INFO: Building PKG (CArchive) HyperAmbientMini.pkg completed successfully.
+25213 INFO: Bootloader C:\Users\thoma\AppData\Local\Programs\Python\Python313\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\runw.exe
+25213 INFO: checking EXE
+25214 INFO: Building EXE because EXE-00.toc is non existent
+25214 INFO: Building EXE from EXE-00.toc
+25218 INFO: Copying bootloader EXE to C:\Users\thoma\.zcode\workspace\default\hyperambient-mini\dist\HyperAmbientMini.exe
+25294 INFO: Copying icon to EXE
+25345 INFO: Copying 0 resources to EXE
+25346 INFO: Embedding manifest in EXE
+25386 INFO: Appending PKG archive to EXE
+25558 INFO: Fixing EXE headers
+26023 INFO: Building EXE from EXE-00.toc completed successfully.
+26045 INFO: Build complete! The results are available in: C:\Users\thoma\.zcode\workspace\default\hyperambient-mini\dist

@@ -995,7 +995,9 @@ class MiniHarness:
         c.tag_lower("grad")
 
     def run(self) -> None:
-        self.root.protocol("WM_DELETE_WINDOW", self._hide_to_tray)
+        # closing the window quits the app entirely (server included);
+        # minimizing hides to the tray
+        self.root.protocol("WM_DELETE_WINDOW", self._quit)
         self.root.mainloop()
 
     def _close(self) -> None:
