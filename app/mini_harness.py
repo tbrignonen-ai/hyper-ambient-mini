@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """hyperambient-mini — light dictation harness (the "ears" of hyper-ambient only).
 
-Mic -> push-to-talk (default) or energy VAD -> parakeet-server
-(fluid-speech-mini GGUF, CPU) -> live text -> copy to clipboard,
-so you can paste into ZCode / the DeepSeek desktop app.
+Mic -> push-to-talk -> parakeet-server (fluid-speech-mini GGUF, CPU) -> text
+-> clipboard, so you can paste into ZCode / the DeepSeek desktop app.
+
+Push-to-talk ONLY (no VAD): hold F9 anywhere, hold the TALK button, or hold
+Space when this window is focused. One activation = one text: the box and the
+clipboard are wiped on press, so after release you paste exactly what you said.
 
 Stdlib + sounddevice only. The STT server is a separate process (start.bat);
 this app never touches the GPU, so a running training job is left alone.
-
-Controls (PTT mode, default): hold F9 anywhere, hold the TALK button, or hold
-Space when this window is focused. One activation = one text: the box and the
-clipboard are wiped on press, so after release you paste exactly what you said.
 """
 from __future__ import annotations
 
@@ -28,6 +27,7 @@ import wave
 
 import sounddevice as sd
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk
 
 # ---------------------------------------------------------------- config ---
@@ -44,14 +44,8 @@ BLOCKSIZE = SAMPLE_RATE * BLOCK_MS // 1000
 # key-state polling; nothing is consumed, nothing is logged).
 HOTKEY = os.environ.get("HAM_HOTKEY", "f9").lower()
 
-# --- VAD (energy-first, hyper-ambient style: spare the inference) ---------
-SILENCE_TO_END_S = 0.75      # this much trailing quiet ends an utterance
 MIN_SPEECH_S = 0.25          # shorter bursts are ignored (clicks, bumps)
 MAX_UTTERANCE_S = 25.0       # hard cap, force-flush mid-speech
-ADAPT_SECONDS = 2.0          # noise-floor learning window at session start
-AGC_FLOOR = 220.0            # absolute RMS below this is never speech (int16)
-NOISE_MULT = 2.5             # speech trigger = noise floor x this
-
 METER_RANGE = 4000.0         # int16 RMS full-scale of the meter bar
 
 # Whisper-style recited credits / empty output: drop rather than display.
@@ -60,16 +54,23 @@ JUNK_PATTERNS = (
     "abonnez vous", "merci d avoir regarde", "subtitle", "www",
 )
 
-# --- palette ---------------------------------------------------------------
-BG = "#0f1216"          # window
-PANEL = "#171c22"       # meter / input fields
-PANEL_HI = "#232a33"    # buttons, hover targets
-TEXT = "#e6e9ee"
-DIM = "#7d8794"
-GREEN = "#69d58c"
-RED = "#ff8fa8"
-REC_A, REC_B = "#a72c4e", "#8e2440"   # pulsing recording pair
-TALK_IDLE, TALK_HOVER = "#31202c", "#43293a"
+# --- palette: indigo / violet, amber + teal accents -----------------------
+BG_TOP = (0x1e, 0x21, 0x45)  # gradient, top (indigo)
+BG_BOT = (0x12, 0x14, 0x2b)  # gradient, bottom (deep indigo)
+PANEL = "#20244a"            # transcript / meter fields
+PANEL_HI = "#333868"         # buttons
+PANEL_HOVER = "#3d4380"
+EDGE = "#3d4380"             # panel outline / keycap rim
+TEXT = "#eef0ff"
+DIM = "#9ba3d8"
+DIM2 = "#6b73b8"
+TEAL = "#5ad6b8"             # ready / good
+PINK = "#ff8fa8"             # recording
+AMBER = "#c98a2e"            # primary action (copy)
+AMBER_HI = "#e0a03e"
+AMBER_FG = "#1f1503"
+TALK_IDLE, TALK_HOVER = "#3d2c66", "#4b377f"    # violet
+REC_A, REC_B = "#c13a63", "#a02c4e"             # pulsing recording pair
 PLACEHOLDER = "hold F9, speak, release — then Ctrl+V anywhere"
 
 
@@ -200,7 +201,6 @@ TRAY_CALLBACK = WM_APP + 1
 WM_LBUTTONUP, WM_LBUTTONDBLCLK, WM_RBUTTONUP = 0x0202, 0x0203, 0x0205
 NIM_ADD, NIM_DELETE = 0, 2
 NIF_MESSAGE, NIF_ICON, NIF_TIP = 0x01, 0x02, 0x04
-_HWND_MESSAGE = wintypes.HWND(-3)
 _LRESULT = ctypes.c_ssize_t
 
 TRAY_WNDPROC = ctypes.WINFUNCTYPE(
@@ -278,19 +278,13 @@ class MiniHarness:
     def __init__(self) -> None:
         self.client = ParakeetClient(SERVER_URL)
         self.root = tk.Tk()
-        self.mode = tk.StringVar(value="ptt")     # "ptt" | "auto"
-        self.listening = threading.Event()        # auto mode: paused <=> cleared
         self.ptt_active = False
         self._last_space_press = 0.0              # autorepeat guard
         self.segment_q: "queue.Queue[bytes]" = queue.Queue()
         self.result_q: "queue.Queue[tuple]" = queue.Queue()
         self.ui_q: "queue.Queue[tuple]" = queue.Queue()   # cross-thread UI cmds
         self.frames: list[bytes] = []             # current utterance buffer
-        self.in_speech = False
-        self.silence_run = 0.0
         self.utter_len = 0.0
-        self.noise_floor = 120.0
-        self.warmup_blocks = 0
         self.last_level = 0.0
         self.zero_blocks = 0
         self.mic_alive = True
@@ -299,6 +293,7 @@ class MiniHarness:
         self.stats = {"n": 0, "ms": 0.0}
         self.server_ok: bool | None = None
         self.device_index = None                  # None = system default
+        self.hotkey_label = "F9"
         self._build_ui()
         self._start_worker()
         self._start_mic(self.device_index)
@@ -320,7 +315,6 @@ class MiniHarness:
         self.hotkey_label = spec.upper().replace("-", "+")
 
         def poll() -> None:
-            import ctypes
             user32 = ctypes.windll.user32
             held = False
             while True:
@@ -336,67 +330,77 @@ class MiniHarness:
 
     # ---------------- UI ----------------
     def _build_ui(self) -> None:
+        # Windows 11 font stack, with graceful fallback
+        fams = set(tkfont.families(self.root))
+        f_main = "Segoe UI Variable Text" if "Segoe UI Variable Text" in fams else "Segoe UI"
+        f_disp = "Segoe UI Variable Display" if "Segoe UI Variable Display" in fams else f_main
+        f_semi = "Segoe UI Semibold" if "Segoe UI Semibold" in fams else f_main
+        self.F = {"main": f_main, "disp": f_disp, "semi": f_semi}
+
         self.root.title("hyperambient-mini")
         self.root.geometry("620x420")
         self.root.minsize(560, 400)
         self.root.attributes("-topmost", True)
-        self.root.configure(bg=BG)
-        # subtle gradient backdrop: visible in the gutters around the panels
-        self.bg = tk.Canvas(self.root, highlightthickness=0, bg=BG)
+        bg_flat = "#%02x%02x%02x" % BG_BOT
+        self.root.configure(bg=bg_flat)
+        # indigo gradient backdrop: visible in the gutters around the panels
+        self.bg = tk.Canvas(self.root, highlightthickness=0, bg=bg_flat)
         self.bg.place(x=0, y=0, relwidth=1, relheight=1)
         self.bg.bind("<Configure>", self._paint_bg)
         self.root.option_add("*TCombobox*Listbox.background", PANEL_HI)
         self.root.option_add("*TCombobox*Listbox.foreground", TEXT)
-        self.root.option_add("*TCombobox*Listbox.selectBackground", "#3a4d73")
+        self.root.option_add("*TCombobox*Listbox.selectBackground", PANEL_HOVER)
         style = ttk.Style(self.root)
         style.theme_use("clam")
         style.configure("Dark.TCombobox", fieldbackground=PANEL, background=PANEL_HI,
-                        foreground=TEXT, arrowcolor=DIM, bordercolor=PANEL_HI,
+                        foreground=TEXT, arrowcolor=DIM, bordercolor=EDGE,
                         lightcolor=PANEL, darkcolor=PANEL, insertcolor=TEXT)
 
-        # header: wordmark + mode chip
-        head = tk.Frame(self.root, bg=BG)
-        head.pack(fill="x", padx=14, pady=(12, 6))
-        tk.Label(head, text="hyperambient", bg=BG, fg=TEXT,
-                 font=("Segoe UI", 11, "bold")).pack(side="left")
-        tk.Label(head, text="mini", bg=BG, fg=DIM,
-                 font=("Segoe UI", 11, "bold italic")).pack(side="left")
-        self.btn_mode = tk.Label(head, text="", bg=PANEL, fg=DIM, padx=10, pady=2,
-                                 font=("Segoe UI", 9, "bold"), cursor="hand2")
-        self.btn_mode.pack(side="right")
-        self.btn_mode.bind("<Button-1>", lambda e: self._cycle_mode())
+        # header: wordmark + keycap chip
+        head = tk.Frame(self.root, bg=bg_flat)
+        head.pack(fill="x", padx=16, pady=(12, 6))
+        tk.Label(head, text="hyperambient", bg=bg_flat, fg=TEXT,
+                 font=(f_disp, 12, "bold")).pack(side="left")
+        tk.Label(head, text="mini", bg=bg_flat, fg=AMBER_HI,
+                 font=(f_disp, 12, "bold italic")).pack(side="left")
+        tk.Label(head, text="hold to talk", bg=bg_flat, fg=DIM2,
+                 font=(f_main, 9)).pack(side="right", padx=(0, 10))
+        self.keycap = tk.Label(head, text=" F9 ", bg=PANEL, fg=AMBER_HI,
+                               padx=8, pady=2, font=(f_semi, 9),
+                               highlightthickness=1, highlightbackground=EDGE)
+        self.keycap.pack(side="right")
 
         self.status = tk.Label(self.root, text="starting…", anchor="w",
-                               bg=BG, fg=DIM, font=("Segoe UI", 9))
-        self.status.pack(fill="x", padx=14)
+                               bg=bg_flat, fg=DIM, font=(f_main, 9))
+        self.status.pack(fill="x", padx=16)
 
-        # level meter: what the mic hears vs the auto-mode trigger
-        meter = tk.Frame(self.root, bg=BG)
-        meter.pack(fill="x", padx=14, pady=(6, 0))
-        tk.Label(meter, text="MIC", bg=BG, fg=DIM,
-                 font=("Segoe UI", 7, "bold")).pack(side="left")
+        # level meter
+        meter = tk.Frame(self.root, bg=bg_flat)
+        meter.pack(fill="x", padx=16, pady=(6, 0))
+        tk.Label(meter, text="MIC", bg=bg_flat, fg=DIM2,
+                 font=(f_semi, 7)).pack(side="left")
         self.meter = tk.Canvas(meter, height=8, bg=PANEL, highlightthickness=0)
         self.meter.pack(fill="x", expand=True, side="left", padx=(8, 8))
-        self.meter_label = tk.Label(meter, text="", bg=BG, fg=DIM,
-                                    font=("Segoe UI", 8), width=8, anchor="e")
+        self.meter_label = tk.Label(meter, text="", bg=bg_flat, fg=DIM,
+                                    font=(f_main, 8), width=8, anchor="e")
         self.meter_label.pack(side="left")
 
-        self.text = tk.Text(self.root, wrap="word", font=("Segoe UI", 13),
+        self.text = tk.Text(self.root, wrap="word", font=(f_main, 13),
                             bg=PANEL, fg=TEXT, relief="flat", insertbackground=TEXT,
                             padx=14, pady=12, spacing3=4, state="disabled",
-                            highlightthickness=1, highlightbackground=PANEL_HI,
-                            highlightcolor="#3a4d73")
-        self.text.pack(fill="both", expand=True, padx=14, pady=8)
-        self.text.tag_configure("placeholder", foreground=DIM,
-                                font=("Segoe UI Italic", 13))
+                            highlightthickness=1, highlightbackground=EDGE,
+                            highlightcolor=PANEL_HOVER)
+        self.text.pack(fill="both", expand=True, padx=16, pady=8)
+        self.text.tag_configure("placeholder", foreground="#8a91c9",
+                                font=(f_main, 13, "italic"))
 
         # talk button
         self.btn_talk = tk.Label(
             self.root,
             text="⏺   Hold F9 and speak  —  release to send",
-            font=("Segoe UI", 12, "bold"), bg=TALK_IDLE, fg="#ffd9e2",
+            font=(f_semi, 12), bg=TALK_IDLE, fg="#e6d9ff",
             padx=14, pady=14, cursor="hand2")
-        self.btn_talk.pack(fill="x", padx=14)
+        self.btn_talk.pack(fill="x", padx=16)
         self.btn_talk.bind("<Enter>", lambda e: self._talk_hover(True))
         self.btn_talk.bind("<Leave>", lambda e: self._talk_hover(False))
         # implicit grab: once pressed, the release reaches us even if the
@@ -409,46 +413,47 @@ class MiniHarness:
         self.root.bind("<Escape>", lambda e: self._ptt_release())
 
         # actions
-        bar = tk.Frame(self.root, bg=BG)
-        bar.pack(fill="x", padx=14, pady=(10, 0))
+        bar = tk.Frame(self.root, bg=bg_flat)
+        bar.pack(fill="x", padx=16, pady=(10, 0))
 
         def btn(label, cmd, accent=False):
             b = tk.Button(bar, text=label, command=cmd, relief="flat",
-                          bg="#2b4a7a" if accent else PANEL_HI, fg=TEXT,
-                          activebackground="#3a4d73" if accent else "#313a46",
-                          activeforeground="#ffffff", borderwidth=0,
-                          font=("Segoe UI", 9, "bold"), padx=14, pady=6,
+                          bg=AMBER if accent else PANEL_HI,
+                          fg=AMBER_FG if accent else TEXT,
+                          activebackground=AMBER_HI if accent else PANEL_HOVER,
+                          activeforeground=AMBER_FG if accent else "#ffffff",
+                          borderwidth=0, font=(f_semi, 9), padx=14, pady=6,
                           cursor="hand2")
-            b.bind("<Enter>", lambda e: b.configure(bg="#3a4d73" if accent else "#313a46"))
-            b.bind("<Leave>", lambda e: b.configure(bg="#2b4a7a" if accent else PANEL_HI))
+            b.bind("<Enter>", lambda e: b.configure(
+                bg=AMBER_HI if accent else PANEL_HOVER))
+            b.bind("<Leave>", lambda e: b.configure(
+                bg=AMBER if accent else PANEL_HI))
             return b
 
         btn("📋 Copy", self.copy_all, accent=True).pack(side="left")
         btn("copy new", self.copy_new).pack(side="left", padx=(6, 0))
         btn("↵ newline", self.insert_newline).pack(side="left", padx=(6, 0))
         btn("clear", self.clear_text).pack(side="left", padx=(6, 0))
-        self.btn_mic = btn("⏸ pause", self.toggle_listen)
-        self.btn_mic.pack(side="left", padx=(6, 0))
 
         self.autocopy = tk.BooleanVar(value=True)
         tk.Checkbutton(bar, text="auto-copy", variable=self.autocopy,
-                       bg=BG, fg=DIM, selectcolor=PANEL_HI,
-                       activebackground=BG, activeforeground=TEXT,
-                       font=("Segoe UI", 9)).pack(side="right")
+                       bg=bg_flat, fg=DIM, selectcolor=PANEL_HI,
+                       activebackground=bg_flat, activeforeground=TEXT,
+                       font=(f_main, 9)).pack(side="right")
 
         # footer: mic + hint
-        dev = tk.Frame(self.root, bg=BG)
-        dev.pack(fill="x", padx=14, pady=(8, 10))
-        tk.Label(dev, text="mic", bg=BG, fg=DIM,
-                 font=("Segoe UI", 8)).pack(side="left")
+        dev = tk.Frame(self.root, bg=bg_flat)
+        dev.pack(fill="x", padx=16, pady=(8, 10))
+        tk.Label(dev, text="mic", bg=bg_flat, fg=DIM2,
+                 font=(f_main, 8)).pack(side="left")
         self.device_box = ttk.Combobox(dev, state="readonly", width=42,
                                        style="Dark.TCombobox",
-                                       font=("Segoe UI", 9))
+                                       font=(f_main, 9))
         self.device_box.pack(side="left", padx=(8, 0))
         self.device_box.bind("<<ComboboxSelected>>", self._device_changed)
         self._fill_devices()
-        tk.Label(dev, text="one activation = one text", bg=BG, fg="#4c545e",
-                 font=("Segoe UI", 8)).pack(side="right")
+        tk.Label(dev, text="one activation = one text", bg=bg_flat, fg=DIM2,
+                 font=(f_main, 8)).pack(side="right")
 
         # Space = push-to-talk while the window has focus (autorepeat-guarded)
         self.root.bind("<KeyPress-space>", self._space_press)
@@ -498,18 +503,6 @@ class MiniHarness:
             self._start_mic(self._devices[pos][0])
             self._set_status(f"· switched to {self._devices[pos][1][:30]}")
 
-    def _cycle_mode(self) -> None:
-        self.mode.set("auto" if self.mode.get() == "ptt" else "ptt")
-        self._mode_changed()
-
-    def _mode_changed(self) -> None:
-        if self.mode.get() == "ptt":
-            self.btn_mic.configure(state="disabled")
-        else:
-            self.btn_mic.configure(state="normal")
-            self.listening.set()
-        self._set_status()
-
     # ---------------- mic ----------------
     def _start_mic(self, device_index) -> None:
         def callback(raw, frames, time_info, status) -> None:
@@ -540,7 +533,6 @@ class MiniHarness:
             self._set_status(f"⚠ mic failed to open: {e}")
             return
         self.mic_alive = True
-        self.warmup_blocks = 0
         self._set_status()
 
     def _on_audio(self, raw) -> None:
@@ -548,44 +540,17 @@ class MiniHarness:
         level = rms_db_of(pcm)
         self.last_level = level
         self.zero_blocks = self.zero_blocks + 1 if level < 1.0 else 0
-
-        if self.mode.get() == "ptt":
-            if self.ptt_active:
-                self.frames.append(pcm)
-                self.utter_len += BLOCK_MS / 1000.0
-                if self.utter_len >= MAX_UTTERANCE_S:
-                    self._flush_utterance()   # cap; user can keep talking
-                    self.frames = [pcm]
-                    self.utter_len = BLOCK_MS / 1000.0
-            return
-
-        # auto VAD mode
-        if not self.listening.is_set():
-            return
-        if self.warmup_blocks < ADAPT_SECONDS * 1000 / BLOCK_MS:
-            self.warmup_blocks += 1
-            self.noise_floor = 0.9 * self.noise_floor + 0.1 * level
-            return
-        speech_threshold = max(self.noise_floor * NOISE_MULT, AGC_FLOOR)
-
-        if not self.in_speech and level > speech_threshold:
-            self.in_speech = True
-            self.silence_run = 0.0
-        if self.in_speech:
+        if self.ptt_active:
             self.frames.append(pcm)
             self.utter_len += BLOCK_MS / 1000.0
-            if level > speech_threshold * 0.55:
-                self.silence_run = 0.0
-            else:
-                self.silence_run += BLOCK_MS / 1000.0
-            if self.silence_run >= SILENCE_TO_END_S or self.utter_len >= MAX_UTTERANCE_S:
-                self._flush_utterance()
+            if self.utter_len >= MAX_UTTERANCE_S:
+                self._flush_utterance()   # cap; user can keep talking
+                self.frames = [pcm]
+                self.utter_len = BLOCK_MS / 1000.0
 
     def _flush_utterance(self) -> None:
         pcm = b"".join(self.frames)
         self.frames = []
-        self.in_speech = False
-        self.silence_run = 0.0
         self.utter_len = 0.0
         dur = len(pcm) / 2 / SAMPLE_RATE
         if dur >= MIN_SPEECH_S:
@@ -593,7 +558,7 @@ class MiniHarness:
 
     # ---------------- push-to-talk ----------------
     def ptt_start(self) -> None:
-        if self.mode.get() != "ptt" or self.ptt_active or not self.mic_alive:
+        if self.ptt_active or not self.mic_alive:
             return
         self.ptt_active = True
         # one activation = one text: previous utterance and clipboard go away
@@ -621,7 +586,7 @@ class MiniHarness:
             return
         self.ptt_active = False
         self.btn_talk.configure(
-            bg=TALK_IDLE, fg="#ffd9e2",
+            bg=TALK_IDLE, fg="#e6d9ff",
             text="⏺   Hold F9 and speak  —  release to send")
         self._flush_utterance()
         self._set_status()
@@ -700,14 +665,9 @@ class MiniHarness:
             return
         self.meter.delete("all")
         frac = min(self.last_level / METER_RANGE, 1.0)
-        color = "#69d58c" if frac < 0.55 else "#e0b34c" if frac < 0.85 else "#e05a5a"
+        color = "#5ad6b8" if frac < 0.55 else "#e0b34c" if frac < 0.85 else "#e05a5a"
         if frac > 0.01:
             self.meter.create_rectangle(0, 0, int(w * frac), 8, fill=color, width=0)
-        if self.mode.get() == "auto" and self.warmup_blocks >= ADAPT_SECONDS * 1000 / BLOCK_MS:
-            thr = max(self.noise_floor * NOISE_MULT, AGC_FLOOR) / METER_RANGE
-            if 0 < thr < 1:
-                x = int(w * min(thr, 1.0))
-                self.meter.create_line(x, 0, x, 8, fill="#f0c674", width=2)
         hint = "SILENT — check device / privacy" if self.zero_blocks > 100 \
             else f"{self.last_level:.0f}"
         self.meter_label.configure(text=hint)
@@ -724,34 +684,19 @@ class MiniHarness:
     def _set_status(self, extra: str = "") -> None:
         if not self.mic_alive:
             state, color = "mic failed", "#ff8080"
-        elif self.mode.get() == "ptt":
-            hk = f" · hold {getattr(self, 'hotkey_label', 'F9')} anywhere" if self.server_ok else ""
-            state = "● recording" if self.ptt_active else "⏺ push-to-talk ready"
-            state += hk
-            color = RED if self.ptt_active else GREEN
-        elif self.listening.is_set():
-            state, color = "● auto listening", GREEN
+        elif self.ptt_active:
+            state, color = "● recording", PINK
         else:
-            state, color = "⏸ paused", "#f0c674"
+            state = f"⏺ push-to-talk ready · hold {self.hotkey_label} anywhere"
+            color = TEAL
         n, ms = self.stats["n"], self.stats["ms"]
         srv = "server ok" if self.server_ok else (
             "server DOWN — run start.bat" if self.server_ok is False else "checking server…")
         self.status.configure(
             text=f"{state}   ·   {srv}   ·   {n} utterances, last {ms:.0f} ms   {extra}",
             fg=color)
-        self.btn_mode.configure(
-            text=("MODE · PTT" if self.mode.get() == "ptt" else "MODE · AUTO VAD"))
 
     # ---------------- buttons ----------------
-    def toggle_listen(self) -> None:
-        if self.listening.is_set():
-            self.listening.clear()
-            self.btn_mic.configure(text="▶ resume")
-        else:
-            self.listening.set()
-            self.btn_mic.configure(text="⏸ pause")
-        self._set_status()
-
     def copy_all(self, silent: bool = False) -> None:
         if self._placeholder_on:
             return
@@ -794,7 +739,7 @@ class MiniHarness:
 
     # ---------------- tray ----------------
     def _init_tray(self) -> None:
-        """Own a tray icon via a message-only window; no extra dependencies."""
+        """Own a tray icon via a hidden helper window; no extra dependencies."""
         try:
             self._wm_taskbarcreated = _user32.RegisterWindowMessageW("TaskbarCreated")
             self._wndproc = TRAY_WNDPROC(self._tray_wndproc)
@@ -860,8 +805,8 @@ class MiniHarness:
 
     def _show_tray_menu(self) -> None:
         m = tk.Menu(self.root, tearoff=0, bg=PANEL_HI, fg=TEXT,
-                    activebackground="#3a4d73", activeforeground="#ffffff",
-                    font=("Segoe UI", 9))
+                    activebackground=PANEL_HOVER, activeforeground="#ffffff",
+                    font=(self.F["main"], 9))
         m.add_command(label="Show / hide", command=self._tray_toggle)
         m.add_separator()
         m.add_command(label="Quit", command=self._quit)
@@ -887,11 +832,11 @@ class MiniHarness:
         if w < 2 or h < 2:
             return
         c.delete("grad")
-        top, bot, steps = (0x18, 0x1e, 0x28), (0x0d, 0x10, 0x15), 48
+        steps = 48
         for i in range(steps):
             t = i / (steps - 1)
             col = "#%02x%02x%02x" % tuple(
-                int(a + (b - a) * t) for a, b in zip(top, bot))
+                int(a + (b - a) * t) for a, b in zip(BG_TOP, BG_BOT))
             y0 = int(h * i / steps)
             c.create_rectangle(0, y0, w, int(h * (i + 1) / steps) + 1,
                                fill=col, width=0, tags="grad")

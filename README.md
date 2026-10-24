@@ -18,8 +18,7 @@ ZCode, the DeepSeek desktop app, anything.
    (Change the key: `set HAM_HOTKEY=f8` or `ctrl-alt-space` before launching.)
 3. Paste (Ctrl+V) into ZCode / the DeepSeek app. With auto-copy on, the whole
    current text is already in the clipboard after every utterance.
-   Auto VAD mode (hands-free, a ~0.75 s pause ends an utterance) is a mode
-   toggle in the window; the level meter shows the mic level and its trigger.
+   Push-to-talk only (no VAD); the level meter shows the live mic level.
 
 Python deps: `pip install sounddevice` (only one; everything else is stdlib).
 
