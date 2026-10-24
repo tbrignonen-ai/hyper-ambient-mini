@@ -42,7 +42,7 @@ BLOCKSIZE = SAMPLE_RATE * BLOCK_MS // 1000
 
 # Global hold-to-talk hotkey: keys joined by '-'. Works from ANY app (passive
 # key-state polling; nothing is consumed, nothing is logged).
-HOTKEY = os.environ.get("HAM_HOTKEY", "ctrl-alt-space").lower()
+HOTKEY = os.environ.get("HAM_HOTKEY", "f9").lower()
 
 # --- VAD (energy-first, hyper-ambient style: spare the inference) ---------
 SILENCE_TO_END_S = 0.75      # this much trailing quiet ends an utterance
@@ -260,7 +260,7 @@ class MiniHarness:
         talk = tk.Frame(self.root, bg="#14171c")
         talk.pack(fill="x", padx=8)
         self.btn_talk = tk.Label(
-            talk, text="⏺  TALK  — hold me, hold Space, or hold Ctrl+Alt+Space (works anywhere)",
+            talk, text="⏺  TALK  — hold F9 anywhere, hold me, or hold Space",
             font=("Segoe UI", 12, "bold"), bg="#7a2040", fg="#ffe8ec",
             padx=14, pady=10, cursor="hand2")
         self.btn_talk.pack(fill="x")
@@ -441,6 +441,13 @@ class MiniHarness:
         if self.mode.get() != "ptt" or self.ptt_active or not self.mic_alive:
             return
         self.ptt_active = True
+        # one activation = one text: previous utterance and clipboard go away
+        self.clear_text()
+        try:
+            self.root.clipboard_clear()
+            self.root.update()
+        except Exception:
+            pass
         self.frames = []
         self.utter_len = 0.0
         self.btn_talk.configure(bg="#a02c4a", text="🔴  RECORDING — release to send")
@@ -459,7 +466,7 @@ class MiniHarness:
         self.ptt_active = False
         self.btn_talk.configure(
             bg="#7a2040",
-            text="⏺  TALK  — hold me, hold Space, or hold Ctrl+Alt+Space (works anywhere)")
+            text="⏺  TALK  — hold F9 anywhere, hold me, or hold Space")
         self._flush_utterance()
         self._set_status()
 
@@ -552,7 +559,7 @@ class MiniHarness:
         if not self.mic_alive:
             state, color = "mic failed", "#ff8080"
         elif self.mode.get() == "ptt":
-            hk = f" · hold {getattr(self, 'hotkey_label', 'Ctrl+Alt+Space')} anywhere" if self.server_ok else ""
+            hk = f" · hold {getattr(self, 'hotkey_label', 'F9')} anywhere" if self.server_ok else ""
             state = "🔴 recording" if self.ptt_active else "⏺ push-to-talk ready"
             state += hk
             color = "#ff9ab0" if self.ptt_active else "#7ee787"

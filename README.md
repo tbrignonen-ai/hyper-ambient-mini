@@ -11,10 +11,11 @@ ZCode, the DeepSeek desktop app, anything.
 ## Use
 
 1. `start.bat` (starts the server minimized if needed, then the window).
-2. **Push-to-talk (default): hold Ctrl+Alt+Space anywhere** — ZCode, the DeepSeek
-   app, anything — speak, release. Or hold the on-screen TALK button / Space
-   when the window is focused. (Change the combo: `set HAM_HOTKEY=ctrl-alt-v`
-   before launching, or any key like `f8`.)
+2. **Push-to-talk (default): hold F9 anywhere** — ZCode, the DeepSeek app,
+   anything — speak, release. Or hold the on-screen TALK button / Space when
+   the window is focused. One activation = one text: the box and clipboard are
+   wiped when you press, so after release you paste exactly what you just said.
+   (Change the key: `set HAM_HOTKEY=f8` or `ctrl-alt-space` before launching.)
 3. Paste (Ctrl+V) into ZCode / the DeepSeek app. With auto-copy on, the whole
    current text is already in the clipboard after every utterance.
    Auto VAD mode (hands-free, a ~0.75 s pause ends an utterance) is a mode
