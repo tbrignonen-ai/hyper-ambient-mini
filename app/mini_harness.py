@@ -44,6 +44,7 @@ BLOCKSIZE = SAMPLE_RATE * BLOCK_MS // 1000
 # Global hold-to-talk hotkey: keys joined by '-'. Works from ANY app (passive
 # key-state polling; nothing is consumed, nothing is logged).
 HOTKEY = os.environ.get("HAM_HOTKEY", "f9").lower()
+SHOW_HOTKEY = os.environ.get("HAM_SHOW_HOTKEY", "ctrl-alt-h").lower()
 
 MIN_SPEECH_S = 0.25          # shorter bursts are ignored (clicks, bumps)
 MAX_UTTERANCE_S = 25.0       # hard cap, force-flush mid-speech
@@ -66,12 +67,13 @@ TEXT = "#eef1ff"
 DIM = "#aab3e8"
 DIM2 = "#7a86c9"
 PINK = "#ff2e88"             # neon pink
+FUCHSIA = "#f222ff"         # synthwave fuchsia
 CYAN = "#01cdfe"             # neon cyan
 BLUE = "#2d5bff"             # electric blue
 ORANGE = "#ff9e3d"           # sunset orange
 YELLOW = "#ffe74c"           # sunset yellow
 FIELD = "#f5efe0"            # blanc cassé — the transcript field only
-FIELD_TEXT = "#2a2418"
+FIELD_TEXT = "#0d8a4e"     # emerald green
 TEAL = "#01cdfe"             # legacy name (ready status = cyan)
 REC_A, REC_B = "#d81b60", "#b3124d"             # pulsing recording pair
 TALK_STOPS = (("#ff2e88", 0.0), ("#ff9e3d", 0.55), ("#ffe74c", 1.0))
@@ -260,6 +262,11 @@ _gdi32.CreateBitmap.argtypes = [ctypes.c_int, ctypes.c_int,
                                 wintypes.UINT, wintypes.UINT, ctypes.c_void_p]
 _user32.CreateIconIndirect.restype = wintypes.HICON
 _user32.CreateIconIndirect.argtypes = [ctypes.c_void_p]
+_user32.GetMessageW.restype = ctypes.c_int
+_user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND,
+                                wintypes.UINT, wintypes.UINT]
+_user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
+_user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
 
 
 def _make_dot_icon(size: int = 32) -> int:
@@ -318,7 +325,6 @@ class MiniHarness:
         self.last_level = 0.0
         self.zero_blocks = 0
         self.mic_alive = True
-        self._placeholder_on = False
         self.copied_upto = "1.0"                  # text index already copied
         self.stats = {"n": 0, "ms": 0.0}
         self.server_ok: bool | None = None
@@ -344,18 +350,28 @@ class MiniHarness:
             return
         self.hotkey_label = spec.upper().replace("-", "+")
 
+        show_vks = hotkey_vks(SHOW_HOTKEY)
+        self.show_hotkey_label = SHOW_HOTKEY.upper().replace("-", "+")
+
         def poll() -> None:
             user32 = ctypes.windll.user32
             held = False
+            shown = False
             while True:
                 time.sleep(0.02)
                 try:
                     down = all(user32.GetAsyncKeyState(v) & 0x8000 for v in vks)
+                    sdown = bool(show_vks) and all(
+                        user32.GetAsyncKeyState(v) & 0x8000 for v in show_vks)
                 except Exception:
                     return
                 if down != held:
                     held = down
                     self.ui_q.put(("ptt", down))
+                if sdown != shown:
+                    shown = sdown
+                    if sdown:
+                        self.ui_q.put(("show", True))
         threading.Thread(target=poll, daemon=True).start()
 
     # ---------------- UI ----------------
@@ -415,7 +431,7 @@ class MiniHarness:
         logo.create_line(1, 29, 33, 29, fill="#0a7a98")
         tk.Label(head, text="Hyperambient", bg=bg_flat, fg=TEXT,
                  font=(f_disp, 12, "bold")).pack(side="left")
-        tk.Label(head, text="mini", bg=bg_flat, fg=PINK,
+        tk.Label(head, text="mini", bg=bg_flat, fg=FUCHSIA,
                  font=(f_disp, 12, "bold italic")).pack(side="left")
         tk.Label(head, text="hold to talk", bg=bg_flat, fg=DIM2,
                  font=(f_main, 9)).pack(side="right", padx=(0, 10))
@@ -439,15 +455,16 @@ class MiniHarness:
                                     font=(f_main, 8), width=8, anchor="e")
         self.meter_label.pack(side="left")
 
-        self.text = tk.Text(self.root, wrap="word", font=(f_main, 13),
-                            bg=FIELD, fg=FIELD_TEXT, relief="flat",
-                            insertbackground=FIELD_TEXT,
-                            padx=14, pady=12, spacing3=4, state="disabled",
-                            highlightthickness=1, highlightbackground="#1d5f70",
-                            highlightcolor=CYAN)
-        self.text.pack(fill="both", expand=True, padx=16, pady=8)
-        self.text.tag_configure("placeholder", foreground="#a89b7c",
-                                font=(f_main, 13, "italic"))
+        # transcript: canvas field (blanc cassé) with watermark + emerald text
+        self.transcript = ""
+        self.copied_len = 0
+        self._tfont = tkfont.Font(root=self.root, font=(f_main, 13))
+        self.c_field = tk.Canvas(self.root, bg=FIELD, highlightthickness=1,
+                                 highlightbackground="#1d5f70",
+                                 highlightcolor=CYAN)
+        self.c_field.pack(fill="both", expand=True, padx=16, pady=8)
+        self.c_field.bind("<Configure>", self._render_field)
+        self._render_field()
 
         # talk button: synthwave sunset gradient on a canvas
         self.btn_talk = tk.Canvas(self.root, height=52, highlightthickness=0,
@@ -502,8 +519,9 @@ class MiniHarness:
         self.device_box.pack(side="left", padx=(8, 0))
         self.device_box.bind("<<ComboboxSelected>>", self._device_changed)
         self._fill_devices()
-        tk.Label(dev, text="one activation = one text", bg=bg_flat, fg=DIM2,
-                 font=(f_main, 8)).pack(side="right")
+        tk.Label(dev, text=f"one activation = one text · "
+                           f"{SHOW_HOTKEY.replace('-', '+')} show",
+                 bg=bg_flat, fg=DIM2, font=(f_main, 8)).pack(side="right")
 
         # Space = push-to-talk while the window has focus (autorepeat-guarded)
         self.root.bind("<KeyPress-space>", self._space_press)
@@ -545,11 +563,7 @@ class MiniHarness:
                       font=(self.F["semi"], 12))
 
     def _set_placeholder(self) -> None:
-        self.text.configure(state="normal")
-        self.text.delete("1.0", "end")
-        self.text.insert("1.0", PLACEHOLDER, ("placeholder",))
-        self.text.configure(state="disabled")
-        self._placeholder_on = True
+        self._render_field()
 
     def _focus_for_ptt(self) -> None:
         self.root.focus_set()
@@ -704,8 +718,21 @@ class MiniHarness:
                 kind, payload = self.ui_q.get_nowait()
                 if kind == "ptt":
                     (self.ptt_start if payload else self._ptt_release)()
+                elif kind == "show":
+                    self._window_toggle()
         except queue.Empty:
             pass
+        tq = getattr(self, "_tray_events", None)
+        if tq is not None:
+            try:
+                while True:
+                    ev = tq.get_nowait()
+                    if ev == "toggle":
+                        self._window_toggle()
+                    elif ev == "menu":
+                        self._show_tray_menu()
+            except queue.Empty:
+                pass
         try:
             while True:
                 kind, text, latency, dur = self.result_q.get_nowait()
@@ -741,27 +768,65 @@ class MiniHarness:
         self.meter.delete("all")
         frac = min(self.last_level / METER_RANGE, 1.0)
         color = ("#01cdfe" if frac < 0.4 else "#ffe74c" if frac < 0.7
-                 else "#ff9e3d" if frac < 0.9 else "#ff2e88")
+                 else "#ff9e3d" if frac < 0.9 else FUCHSIA)
         if frac > 0.01:
             self.meter.create_rectangle(0, 0, int(w * frac), 8, fill=color, width=0)
         silent = self.zero_blocks > 100
         hint = "SILENT — check device / privacy" if silent else f"{self.last_level:.0f}"
         self.meter_label.configure(text=hint, fg="#ff5c8a" if silent else DIM)
 
+    def _render_field(self, _event=None) -> None:
+        """Watermark sun + wrapped transcript in emerald on blanc cassé."""
+        c = self.c_field
+        c.delete("all")
+        w = c.winfo_width() or 400
+        h = c.winfo_height() or 200
+        # watermark: pale synthwave sun over a faint horizon, bottom-right
+        sun_stops = (("#e2ead9", 0.0), ("#e6ddc0", 0.55), ("#e5c9c6", 1.0))
+        cx, cy, R = w - 95, h - 85, 64
+        for y in range(2 * R):
+            half = (R * R - (y - R + 0.5) ** 2) ** 0.5
+            t = y / (2 * R - 1)
+            if t > 0.62 and y % 4 == 3:
+                continue
+            c.create_rectangle(int(cx - half), int(cy - R + y),
+                               int(cx + half), int(cy - R + y + 1),
+                               fill=_lerp_stops(sun_stops, t), width=0)
+        c.create_line(cx - R - 16, cy + 18, cx + R + 16, cy + 18, fill="#d3ddd2")
+        for k in (18, 42, 66):
+            c.create_line(cx - k * 0.5, cy + 18, cx - k * 1.5, h, fill="#d3ddd2")
+            c.create_line(cx + k * 0.5, cy + 18, cx + k * 1.5, h, fill="#d3ddd2")
+        if not self.transcript.strip():
+            c.create_text(16, 14, anchor="nw", text=PLACEHOLDER,
+                          fill="#93b8a2", font=(self.F["main"], 13, "italic"))
+            return
+        maxw = max(w - 32, 40)
+        lines = []
+        for para in self.transcript.split("\n"):
+            cur = ""
+            for word in para.split(" "):
+                trial = (cur + " " + word).strip()
+                if self._tfont.measure(trial) <= maxw or not cur:
+                    cur = trial
+                else:
+                    lines.append(cur)
+                    cur = word
+            lines.append(cur)
+        lh = self._tfont.metrics("linespace") + 4
+        max_lines = max(int((h - 24) // lh), 1)
+        for i, line in enumerate(lines[-max_lines:]):
+            c.create_text(16, 12 + i * lh, anchor="nw", text=line,
+                          fill=FIELD_TEXT, font=(self.F["main"], 13))
+
     def _append(self, s: str) -> None:
-        self.text.configure(state="normal")
-        if self._placeholder_on:
-            self.text.delete("1.0", "end")
-            self._placeholder_on = False
-        self.text.insert("end", s)
-        self.text.see("end")
-        self.text.configure(state="disabled")
+        self.transcript += s
+        self._render_field()
 
     def _set_status(self, extra: str = "") -> None:
         if not self.mic_alive:
             state, color = "mic failed", "#ff8080"
         elif self.ptt_active:
-            state, color = "● recording", PINK
+            state, color = "● recording", FUCHSIA
         else:
             state = f"⏺ push-to-talk ready · hold {self.hotkey_label} anywhere"
             color = TEAL
@@ -774,99 +839,101 @@ class MiniHarness:
 
     # ---------------- buttons ----------------
     def copy_all(self, silent: bool = False) -> None:
-        if self._placeholder_on:
-            return
-        content = self.text.get("1.0", "end").strip()
+        content = self.transcript.strip()
         if not content:
             return
         self.root.clipboard_clear()
         self.root.clipboard_append(content)
         self.root.update()          # win the clipboard race with the target app
-        self.copied_upto = self.text.index("end-1c")
+        self.copied_len = len(self.transcript)
         if not silent:
             self._set_status("· copied ✓")
 
     def copy_new(self) -> None:
-        if self._placeholder_on:
-            self._set_status("· nothing new")
-            return
-        fresh = self.text.get(self.copied_upto, "end").strip()
+        fresh = self.transcript[self.copied_len:].strip()
         if not fresh:
             self._set_status("· nothing new")
             return
         self.root.clipboard_clear()
         self.root.clipboard_append(fresh)
         self.root.update()
-        self.copied_upto = self.text.index("end-1c")
+        self.copied_len = len(self.transcript)
         self._set_status("· copied new ✓")
 
     def insert_newline(self) -> None:
-        if self._placeholder_on:
-            return
-        self._append("\n")
+        if self.transcript.strip():
+            self._append("\n")
 
     def clear_text(self) -> None:
-        self.text.configure(state="normal")
-        self.text.delete("1.0", "end")
-        self.text.configure(state="disabled")
-        self.copied_upto = "1.0"
+        self.transcript = ""
+        self.copied_len = 0
         self.stats = {"n": 0, "ms": 0.0}
-        self._set_placeholder()
+        self._render_field()
 
     # ---------------- tray ----------------
     def _init_tray(self) -> None:
-        """Own a tray icon via a hidden helper window; no extra dependencies."""
-        try:
-            self._wm_taskbarcreated = _user32.RegisterWindowMessageW("TaskbarCreated")
-            self._wndproc = TRAY_WNDPROC(self._tray_wndproc)
-            wc = _WNDCLASSW()
-            wc.lpfnWndProc = self._wndproc
-            wc.hInstance = _kernel32.GetModuleHandleW(None)
-            wc.lpszClassName = "HyperAmbientMiniTray"
-            if not _user32.RegisterClassW(byref(wc)):
-                raise OSError("RegisterClassW failed")
-            # a real (never shown) window, not HWND_MESSAGE: message-only
-            # windows are unreliable recipients of tray callbacks on windows
-            self._tray_hwnd = _user32.CreateWindowExW(
-                0, "HyperAmbientMiniTray", "ham-tray", 0,  # WS_OVERLAPPED, hidden
-                0, 0, 0, 0, None, None, wc.hInstance, None)
-            self._tray_icon = _make_dot_icon()
-            self._nid = _NOTIFYICONDATAW()
-            self._nid.cbSize = ctypes.sizeof(_NOTIFYICONDATAW)
-            self._nid.hWnd = self._tray_hwnd
-            self._nid.uID = 1
-            self._nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
-            self._nid.uCallbackMessage = TRAY_CALLBACK
-            self._nid.hIcon = self._tray_icon
-            self._nid.szTip = "hyperambient-mini — hold F9 to talk"
-            ok = self._tray_add()
-            print(f"tray icon added: {ok}", flush=True)
-        except Exception as e:
-            import traceback; traceback.print_exc()
-            print(f"tray unavailable ({e}); window-only mode", flush=True)
+        """Tray icon owned by its own thread + message pump.
 
-    def _tray_add(self) -> bool:
-        return bool(_shell32.Shell_NotifyIconW(NIM_ADD, byref(self._nid)))
+        The wndproc must NEVER touch Tk directly: Tk's mainloop releases the
+        GIL while pumping Windows messages, and a ctypes callback re-entering
+        tkinter from inside that pump crashes the interpreter
+        (PyEval_RestoreThread fatal). Events cross to the Tk thread via a
+        plain queue, drained by _poll_results.
+        """
+        self._tray_events = queue.Queue()
+
+        def tray_thread() -> None:
+            try:
+                wm_taskbar = _user32.RegisterWindowMessageW("TaskbarCreated")
+                proc = TRAY_WNDPROC(self._tray_wndproc)
+                wc = _WNDCLASSW()
+                wc.lpfnWndProc = proc
+                wc.hInstance = _kernel32.GetModuleHandleW(None)
+                wc.lpszClassName = "HyperAmbientMiniTray"
+                if not _user32.RegisterClassW(byref(wc)):
+                    raise OSError("RegisterClassW failed")
+                hwnd = _user32.CreateWindowExW(
+                    0, "HyperAmbientMiniTray", "ham-tray", 0,
+                    0, 0, 0, 0, None, None, wc.hInstance, None)
+                nid = _NOTIFYICONDATAW()
+                nid.cbSize = ctypes.sizeof(_NOTIFYICONDATAW)
+                nid.hWnd = hwnd
+                nid.uID = 1
+                nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
+                nid.uCallbackMessage = TRAY_CALLBACK
+                nid.hIcon = _make_dot_icon()
+                nid.szTip = "hyperambient-mini — hold F9 to talk"
+                self._tray_proc, self._tray_hwnd = proc, hwnd
+                self._nid, self._wm_taskbarcreated = nid, wm_taskbar
+                ok = _shell32.Shell_NotifyIconW(NIM_ADD, byref(nid))
+                print(f"tray icon added: {ok}", flush=True)
+                msg = wintypes.MSG()
+                while _user32.GetMessageW(byref(msg), None, 0, 0) > 0:
+                    _user32.TranslateMessage(byref(msg))
+                    _user32.DispatchMessageW(byref(msg))
+            except Exception as e:
+                print(f"tray unavailable ({e}); window-only mode", flush=True)
+
+        threading.Thread(target=tray_thread, daemon=True).start()
 
     def _tray_wndproc(self, hwnd, msg, wparam, lparam):
+        # runs on the tray thread: queue only, no Tk calls, no prints of state
         try:
             if msg == TRAY_CALLBACK:
-                print(f"tray callback: mouse msg {lparam:#x}", flush=True)
                 if lparam in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
-                    self.root.after(0, self._tray_toggle)
+                    self._tray_events.put("toggle")
                 elif lparam == WM_RBUTTONUP:
-                    self.root.after(0, self._show_tray_menu)
+                    self._tray_events.put("menu")
                 return 0
             if msg == self._wm_taskbarcreated:      # explorer restarted
-                self._tray_add()
+                _shell32.Shell_NotifyIconW(NIM_ADD, byref(self._nid))
                 return 0
         except Exception:
             pass
         return _user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
-    def _tray_toggle(self) -> None:
-        was = self.root.state()
-        if was == "withdrawn":
+    def _window_toggle(self) -> None:
+        if self.root.state() == "withdrawn":
             self.root.deiconify()
             self.root.state("normal")       # deiconify alone may restore iconic
             self.root.attributes("-topmost", True)
@@ -874,7 +941,6 @@ class MiniHarness:
             self.root.focus_force()
         else:
             self._hide_to_tray()
-        print(f"tray toggle: {was} -> {self.root.state()}", flush=True)
 
     def _hide_to_tray(self) -> None:
         self.root.withdraw()
@@ -883,7 +949,7 @@ class MiniHarness:
         m = tk.Menu(self.root, tearoff=0, bg=PANEL, fg=TEXT,
                     activebackground=BLUE, activeforeground="#ffffff",
                     font=(self.F["main"], 9))
-        m.add_command(label="Show / hide", command=self._tray_toggle)
+        m.add_command(label="Show / hide", command=self._window_toggle)
         m.add_separator()
         m.add_command(label="Quit", command=self._quit)
         try:
