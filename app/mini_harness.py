@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """hyperambient-mini — light dictation harness (the "ears" of hyper-ambient only).
 
-Mic -> energy VAD -> parakeet-server (fluid-speech-mini GGUF, CPU) -> live text
--> copy to clipboard, so you can paste into ZCode / the DeepSeek desktop app.
+Mic -> push-to-talk (default) or energy VAD -> parakeet-server
+(fluid-speech-mini GGUF, CPU) -> live text -> copy to clipboard,
+so you can paste into ZCode / the DeepSeek desktop app.
 
 Stdlib + sounddevice only. The STT server is a separate process (start.bat);
 this app never touches the GPU, so a running training job is left alone.
+
+Controls (PTT mode, default): hold the TALK button, or hold Space when this
+window is focused. The level meter shows what the mic hears vs the trigger
+threshold used in Auto mode.
 """
 from __future__ import annotations
 
@@ -37,10 +42,13 @@ BLOCKSIZE = SAMPLE_RATE * BLOCK_MS // 1000
 
 # --- VAD (energy-first, hyper-ambient style: spare the inference) ---------
 SILENCE_TO_END_S = 0.75      # this much trailing quiet ends an utterance
-MIN_SPEECH_S = 0.30          # shorter bursts are ignored (clicks, bumps)
+MIN_SPEECH_S = 0.25          # shorter bursts are ignored (clicks, bumps)
 MAX_UTTERANCE_S = 25.0       # hard cap, force-flush mid-speech
 ADAPT_SECONDS = 2.0          # noise-floor learning window at session start
-AGC_FLOOR = 350.0            # absolute RMS below this is never speech (int16)
+AGC_FLOOR = 220.0            # absolute RMS below this is never speech (int16)
+NOISE_MULT = 2.5             # speech trigger = noise floor x this
+
+METER_RANGE = 4000.0         # int16 RMS full-scale of the meter bar
 
 # Whisper-style recited credits / empty output: drop rather than display.
 JUNK_PATTERNS = (
@@ -50,10 +58,15 @@ JUNK_PATTERNS = (
 
 
 # ------------------------------------------------------------ audio utils ---
-def rms_db_of(raw: bytes) -> float:
-    """RMS of an int16 frame, in dBFS-ish arbitrary units. array module: no numpy."""
-    samples = array.array("h")
-    samples.frombytes(bytes(raw))
+def as_samples(raw) -> array.array:
+    a = array.array("h")
+    a.frombytes(bytes(raw))
+    return a
+
+
+def rms_db_of(raw) -> float:
+    """RMS of an int16 frame. array module: no numpy needed."""
+    samples = as_samples(raw)
     if not samples:
         return 0.0
     acc = 0
@@ -65,9 +78,8 @@ def rms_db_of(raw: bytes) -> float:
 def resample_to_16k(raw: bytes, src_rate: int) -> bytes:
     """Linear resample int16 mono to 16 kHz (only used if the mic refuses 16k)."""
     if src_rate == SAMPLE_RATE:
-        return raw
-    in_s = array.array("h")
-    in_s.frombytes(bytes(raw))
+        return bytes(raw)
+    in_s = as_samples(raw)
     step = src_rate / SAMPLE_RATE
     n_out = int(len(in_s) / step)
     out = array.array("h", bytes(2 * n_out))
@@ -145,23 +157,30 @@ def is_junk(text: str) -> bool:
 class MiniHarness:
     def __init__(self) -> None:
         self.client = ParakeetClient(SERVER_URL)
-        self.recording = False          # mic stream open
-        self.listening = threading.Event()  # paused <=> cleared
+        self.root = tk.Tk()
+        self.mode = tk.StringVar(value="ptt")     # "ptt" | "auto"
+        self.listening = threading.Event()        # auto mode: paused <=> cleared
+        self.ptt_active = False
+        self._last_space_press = 0.0              # autorepeat guard
         self.segment_q: "queue.Queue[bytes]" = queue.Queue()
         self.result_q: "queue.Queue[tuple]" = queue.Queue()
-        self.frames: list[bytes] = []   # current utterance buffer
+        self.frames: list[bytes] = []             # current utterance buffer
         self.in_speech = False
         self.silence_run = 0.0
-        self.speech_run = 0.0
         self.utter_len = 0.0
         self.noise_floor = 120.0
         self.warmup_blocks = 0
-        self.copied_upto = "1.0"        # text index: everything before is copied
+        self.last_level = 0.0
+        self.zero_blocks = 0
+        self.mic_alive = True
+        self.copied_upto = "1.0"                  # text index already copied
         self.stats = {"n": 0, "ms": 0.0}
         self.server_ok: bool | None = None
+        self.device_index = None                  # None = system default
         self._build_ui()
         self._start_worker()
-        self._start_mic()
+        self._start_mic(self.device_index)
+        self.root.after(200, self._focus_for_ptt)
         threading.Thread(target=self._probe_server, daemon=True).start()
 
     def _probe_server(self) -> None:
@@ -170,36 +189,59 @@ class MiniHarness:
 
     # ---------------- UI ----------------
     def _build_ui(self) -> None:
-        self.root = tk.Tk()
         self.root.title("hyperambient-mini")
-        self.root.geometry("560x300")
+        self.root.geometry("580x360")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#14171c")
-        try:  # nice-ish dark text area
-            self.root.tk_setPalette(background="#14171c", foreground="#e8e8e8")
-        except tk.TclError:
-            pass
 
         self.status = tk.Label(self.root, text="starting…", anchor="w",
                                bg="#14171c", fg="#8fb8ff", font=("Segoe UI", 9))
         self.status.pack(fill="x", padx=8, pady=(6, 0))
+
+        # level meter: what the mic hears vs the auto-mode trigger
+        meter = tk.Frame(self.root, bg="#14171c")
+        meter.pack(fill="x", padx=8, pady=(4, 0))
+        self.meter = tk.Canvas(meter, height=10, bg="#1b1f26", highlightthickness=0)
+        self.meter.pack(fill="x", expand=True, side="left")
+        self.meter_label = tk.Label(meter, text="", bg="#14171c", fg="#8a929e",
+                                    font=("Segoe UI", 8))
+        self.meter_label.pack(side="left", padx=(8, 0))
 
         self.text = tk.Text(self.root, wrap="word", font=("Segoe UI", 12),
                             bg="#1b1f26", fg="#e8e8e8", relief="flat",
                             padx=10, pady=8, state="disabled")
         self.text.pack(fill="both", expand=True, padx=8, pady=6)
 
-        bar = tk.Frame(self.root, bg="#14171c")
-        bar.pack(fill="x", padx=8, pady=(0, 8))
+        talk = tk.Frame(self.root, bg="#14171c")
+        talk.pack(fill="x", padx=8)
+        self.btn_talk = tk.Label(
+            talk, text="⏺  TALK  (hold me — or hold Space)",
+            font=("Segoe UI", 13, "bold"), bg="#7a2040", fg="#ffe8ec",
+            padx=14, pady=10, cursor="hand2")
+        self.btn_talk.pack(fill="x")
+        self.btn_talk.bind("<ButtonPress-1>", lambda e: self.ptt_start())
+        self.btn_talk.bind("<ButtonRelease-1>", lambda e: self.ptt_stop())
 
-        def btn(label, cmd, accent=False):
+        bar = tk.Frame(self.root, bg="#14171c")
+        bar.pack(fill="x", padx=8, pady=(6, 0))
+
+        tk.Label(bar, text="mode:", bg="#14171c", fg="#8a929e",
+                 font=("Segoe UI", 9)).pack(side="left")
+        for label, value in (("push-to-talk", "ptt"), ("auto VAD", "auto")):
+            rb = tk.Radiobutton(bar, text=label, variable=self.mode, value=value,
+                                command=self._mode_changed, bg="#14171c",
+                                fg="#e8e8e8", selectcolor="#232833",
+                                activebackground="#14171c", font=("Segoe UI", 9))
+            rb.pack(side="left")
+
+        def btn(label, cmd):
             return tk.Button(bar, text=label, command=cmd, relief="flat",
-                             bg="#2b3a55" if accent else "#232833",
-                             fg="#e8e8e8", activebackground="#3a4d73",
+                             bg="#232833", fg="#e8e8e8",
+                             activebackground="#3a4d73",
                              font=("Segoe UI", 9, "bold"), padx=10)
 
-        self.btn_mic = btn("⏸ Pause", self.toggle_listen, accent=True)
-        self.btn_mic.pack(side="left")
+        self.btn_mic = btn("⏸ Pause", self.toggle_listen)
+        self.btn_mic.pack(side="left", padx=(10, 0))
         btn("📋 Copy new", self.copy_new).pack(side="left", padx=(6, 0))
         btn("📋 Copy all", self.copy_all).pack(side="left", padx=(6, 0))
         btn("↵ Newline", self.insert_newline).pack(side="left", padx=(6, 0))
@@ -209,65 +251,128 @@ class MiniHarness:
         tk.Checkbutton(bar, text="auto-copy", variable=self.autocopy,
                        bg="#14171c", fg="#e8e8e8", selectcolor="#232833",
                        activebackground="#14171c").pack(side="right")
-        self.ontop = tk.BooleanVar(value=True)
-        tk.Checkbutton(bar, text="on-top", variable=self.ontop,
-                       command=lambda: self.root.attributes(
-                           "-topmost", bool(self.ontop.get())),
-                       bg="#14171c", fg="#e8e8e8", selectcolor="#232833",
-                       activebackground="#14171c").pack(side="right", padx=(0, 8))
 
+        dev = tk.Frame(self.root, bg="#14171c")
+        dev.pack(fill="x", padx=8, pady=(4, 8))
+        tk.Label(dev, text="mic:", bg="#14171c", fg="#8a929e",
+                 font=("Segoe UI", 9)).pack(side="left")
+        self.device_box = ttk.Combobox(dev, state="readonly", width=44)
+        self.device_box.pack(side="left", padx=(6, 0))
+        self.device_box.bind("<<ComboboxSelected>>", self._device_changed)
+        self._fill_devices()
+
+        # Space = push-to-talk while the window has focus (autorepeat-guarded)
+        self.root.bind("<KeyPress-space>", self._space_press)
+        self.root.bind("<KeyRelease-space>", self._space_release)
         self.root.after(150, self._poll_results)
 
-    # ---------------- mic + VAD ----------------
-    def _start_mic(self) -> None:
-        def callback(raw: bytes, frames, time_info, status) -> None:
-            self._on_audio(raw, status)
+    def _focus_for_ptt(self) -> None:
+        self.root.focus_set()
+        self.btn_talk.focus_set()
 
+    def _fill_devices(self) -> None:
+        try:
+            inputs = [(d["index"], d["name"]) for d in sd.query_devices()
+                      if d["max_input_channels"] > 0]
+        except Exception:
+            inputs = []
+        self._devices = inputs
+        default = sd.query_devices(kind="input")["index"] if inputs else None
+        names, current = [], 0
+        for i, (idx, name) in enumerate(inputs):
+            mark = "  ← default" if idx == default else ""
+            names.append(f"[{idx}] {name}{mark}")
+            if idx == default:
+                current = i
+        self.device_box["values"] = names or ["no input device found"]
+        if names:
+            self.device_box.current(current)
+
+    def _device_changed(self, _event) -> None:
+        if not getattr(self, "_devices", None):
+            return
+        pos = self.device_box.current()
+        if 0 <= pos < len(self._devices):
+            self._start_mic(self._devices[pos][0])
+            self._set_status(f"· switched to {self._devices[pos][1][:30]}")
+
+    def _mode_changed(self) -> None:
+        if self.mode.get() == "ptt":
+            self.btn_mic.configure(state="disabled")
+        else:
+            self.btn_mic.configure(state="normal")
+            self.listening.set()
+        self._set_status()
+
+    # ---------------- mic ----------------
+    def _start_mic(self, device_index) -> None:
+        def callback(raw, frames, time_info, status) -> None:
+            self._on_audio(raw)
+
+        old = getattr(self, "stream", None)
+        if old is not None:
+            try:
+                old.stop()
+                old.close()
+            except Exception:
+                pass
         try:
             self.stream = sd.RawInputStream(
                 samplerate=SAMPLE_RATE, channels=1, dtype="int16",
-                blocksize=BLOCKSIZE, callback=callback)
+                blocksize=BLOCKSIZE, callback=callback, device=device_index)
             self.mic_rate = SAMPLE_RATE
         except sd.PortAudioError:
             self.stream = sd.RawInputStream(
                 samplerate=44100, channels=1, dtype="int16",
-                blocksize=44100 * BLOCK_MS // 1000, callback=callback)
+                blocksize=44100 * BLOCK_MS // 1000, callback=callback,
+                device=device_index)
             self.mic_rate = 44100
-        self.stream.start()
-        self.recording = True
-        self.listening.set()
+        try:
+            self.stream.start()
+        except Exception as e:
+            self.mic_alive = False
+            self._set_status(f"⚠ mic failed to open: {e}")
+            return
+        self.mic_alive = True
+        self.warmup_blocks = 0
         self._set_status()
 
-    def _on_audio(self, raw: bytes, status) -> None:
-        if status:
-            pass  # overflow on busy machines is survivable; keep going
-        if not self.listening.is_set():
-            return
+    def _on_audio(self, raw) -> None:
         pcm = resample_to_16k(raw, self.mic_rate)
         level = rms_db_of(pcm)
+        self.last_level = level
+        self.zero_blocks = self.zero_blocks + 1 if level < 1.0 else 0
 
+        if self.mode.get() == "ptt":
+            if self.ptt_active:
+                self.frames.append(pcm)
+                self.utter_len += BLOCK_MS / 1000.0
+                if self.utter_len >= MAX_UTTERANCE_S:
+                    self._flush_utterance()   # cap; user can keep talking
+                    self.frames = [pcm]
+                    self.utter_len = BLOCK_MS / 1000.0
+            return
+
+        # auto VAD mode
+        if not self.listening.is_set():
+            return
         if self.warmup_blocks < ADAPT_SECONDS * 1000 / BLOCK_MS:
             self.warmup_blocks += 1
             self.noise_floor = 0.9 * self.noise_floor + 0.1 * level
             return
-        speech_threshold = max(self.noise_floor * 3.0, AGC_FLOOR)
+        speech_threshold = max(self.noise_floor * NOISE_MULT, AGC_FLOOR)
 
-        if not self.in_speech:
-            if level > speech_threshold:
-                self.in_speech = True
-                self.speech_run = 0.0
-                self.silence_run = 0.0
+        if not self.in_speech and level > speech_threshold:
+            self.in_speech = True
+            self.silence_run = 0.0
         if self.in_speech:
             self.frames.append(pcm)
             self.utter_len += BLOCK_MS / 1000.0
-            if level > speech_threshold * 0.6:
-                self.speech_run += BLOCK_MS / 1000.0
+            if level > speech_threshold * 0.55:
                 self.silence_run = 0.0
             else:
                 self.silence_run += BLOCK_MS / 1000.0
-            done = (self.silence_run >= SILENCE_TO_END_S
-                    or self.utter_len >= MAX_UTTERANCE_S)
-            if done:
+            if self.silence_run >= SILENCE_TO_END_S or self.utter_len >= MAX_UTTERANCE_S:
                 self._flush_utterance()
 
     def _flush_utterance(self) -> None:
@@ -279,6 +384,40 @@ class MiniHarness:
         dur = len(pcm) / 2 / SAMPLE_RATE
         if dur >= MIN_SPEECH_S:
             self.segment_q.put(pcm)
+
+    # ---------------- push-to-talk ----------------
+    def ptt_start(self) -> None:
+        if self.mode.get() != "ptt" or self.ptt_active or not self.mic_alive:
+            return
+        self.ptt_active = True
+        self.frames = []
+        self.utter_len = 0.0
+        self.btn_talk.configure(bg="#a02c4a", text="🔴  RECORDING — release to send")
+        self._set_status()
+
+    def ptt_stop(self) -> None:
+        if not self.ptt_active:
+            return
+        self.ptt_active = False
+        self.btn_talk.configure(bg="#7a2040", text="⏺  TALK  (hold me — or hold Space)")
+        self._flush_utterance()
+        self._set_status()
+
+    def _space_press(self, _event) -> None:
+        self._last_space_press = time.time()
+        self.ptt_start()
+
+    def _space_release(self, _event) -> None:
+        # Windows autorepeat interleaves KeyRelease between KeyPress events;
+        # only honor a release that is not immediately followed by a repeat.
+        if time.time() - self._last_space_press > 0.06:
+            self.ptt_stop()
+        else:
+            self.root.after(80, self._space_release_check)
+
+    def _space_release_check(self) -> None:
+        if time.time() - self._last_space_press > 0.06:
+            self.ptt_stop()
 
     # ---------------- worker: segments -> server ----------------
     def _start_worker(self) -> None:
@@ -310,10 +449,31 @@ class MiniHarness:
                         f.write(text + "\n")
                     if self.autocopy.get():
                         self.copy_all(silent=True)
+                elif dur > 0.5 and not text:
+                    self._set_status("· heard only silence (check mic / level meter)")
+                    continue
                 self._set_status()
         except queue.Empty:
             pass
+        self._draw_meter()
         self.root.after(120, self._poll_results)
+
+    def _draw_meter(self) -> None:
+        w = self.meter.winfo_width()
+        if w < 20:
+            return
+        self.meter.delete("all")
+        frac = min(self.last_level / METER_RANGE, 1.0)
+        color = "#7ee787" if frac > 0.15 else "#3a4149"
+        self.meter.create_rectangle(0, 0, int(w * frac), 10, fill=color, width=0)
+        if self.mode.get() == "auto" and self.warmup_blocks >= ADAPT_SECONDS * 1000 / BLOCK_MS:
+            thr = max(self.noise_floor * NOISE_MULT, AGC_FLOOR) / METER_RANGE
+            if 0 < thr < 1:
+                x = int(w * min(thr, 1.0))
+                self.meter.create_line(x, 0, x, 10, fill="#f0c674", width=2)
+        hint = "mic SILENT — check device / Windows mic privacy" if self.zero_blocks > 100 \
+            else f"level {self.last_level:.0f}"
+        self.meter_label.configure(text=hint)
 
     def _append(self, s: str) -> None:
         self.text.configure(state="normal")
@@ -322,18 +482,20 @@ class MiniHarness:
         self.text.configure(state="disabled")
 
     def _set_status(self, extra: str = "") -> None:
-        if not self.recording:
-            state, color = "mic closed", "#ff8080"
+        if not self.mic_alive:
+            state, color = "mic failed", "#ff8080"
+        elif self.mode.get() == "ptt":
+            state = "🔴 recording" if self.ptt_active else "⏺ push-to-talk ready"
+            color = "#ff9ab0" if self.ptt_active else "#7ee787"
         elif self.listening.is_set():
-            state, color = "● listening", "#7ee787"
+            state, color = "● auto listening", "#7ee787"
         else:
             state, color = "⏸ paused", "#f0c674"
         n, ms = self.stats["n"], self.stats["ms"]
         srv = "server ok" if self.server_ok else (
             "server DOWN — run start.bat" if self.server_ok is False else "checking server…")
         self.status.configure(
-            text=f"{state}   ·   {srv} {SERVER_URL.split('//')[1]}   ·   "
-                 f"{n} utterances, last {ms:.0f} ms   {extra}",
+            text=f"{state}   ·   {srv}   ·   {n} utterances, last {ms:.0f} ms   {extra}",
             fg=color)
 
     # ---------------- buttons ----------------
@@ -390,7 +552,7 @@ class MiniHarness:
 
 
 def selftest() -> int:
-    """No-GUI check: server round-trip on a real wav + VAD/junk-guard logic."""
+    """No-GUI check: server round-trip on a real wav + junk-guard logic."""
     src = os.path.join(ROOT, "..", "hyper-ambient-src", "data", "in", "question.wav")
     if not os.path.exists(src):
         print("selftest: sample wav not found:", src)
@@ -410,6 +572,8 @@ def selftest() -> int:
     assert not is_junk(text), "valid text flagged as junk"
     assert is_junk(""), "empty should be junk"
     assert is_junk("Subtitles by the Amara.org community"), "credit not caught"
+    assert is_junk("No, no, no, no."), "repeat hallucination not caught"
+    assert not is_junk("No, that is not what I meant"), "false positive"
     with open(TRANSCRIPT_FILE, "a", encoding="utf-8") as f:
         f.write(text + "\n")
     print("selftest: OK (transcript.txt written)")
