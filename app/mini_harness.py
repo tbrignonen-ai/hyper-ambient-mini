@@ -804,9 +804,11 @@ class MiniHarness:
             wc.lpszClassName = "HyperAmbientMiniTray"
             if not _user32.RegisterClassW(byref(wc)):
                 raise OSError("RegisterClassW failed")
+            # a real (never shown) window, not HWND_MESSAGE: message-only
+            # windows are unreliable recipients of tray callbacks on windows
             self._tray_hwnd = _user32.CreateWindowExW(
-                0, "HyperAmbientMiniTray", "ham-tray", 0, 0, 0, 0, 0,
-                _HWND_MESSAGE, None, wc.hInstance, None)
+                0, "HyperAmbientMiniTray", "ham-tray", 0,  # WS_OVERLAPPED, hidden
+                0, 0, 0, 0, None, None, wc.hInstance, None)
             self._tray_icon = _make_dot_icon()
             self._nid = _NOTIFYICONDATAW()
             self._nid.cbSize = ctypes.sizeof(_NOTIFYICONDATAW)
@@ -828,6 +830,7 @@ class MiniHarness:
     def _tray_wndproc(self, hwnd, msg, wparam, lparam):
         try:
             if msg == TRAY_CALLBACK:
+                print(f"tray callback: mouse msg {lparam:#x}", flush=True)
                 if lparam in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
                     self.root.after(0, self._tray_toggle)
                 elif lparam == WM_RBUTTONUP:
@@ -841,12 +844,16 @@ class MiniHarness:
         return _user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
     def _tray_toggle(self) -> None:
-        if self.root.state() == "withdrawn":
+        was = self.root.state()
+        if was == "withdrawn":
             self.root.deiconify()
+            self.root.state("normal")       # deiconify alone may restore iconic
+            self.root.attributes("-topmost", True)
             self.root.lift()
             self.root.focus_force()
         else:
             self._hide_to_tray()
+        print(f"tray toggle: {was} -> {self.root.state()}", flush=True)
 
     def _hide_to_tray(self) -> None:
         self.root.withdraw()
