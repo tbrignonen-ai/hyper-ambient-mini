@@ -72,7 +72,7 @@ CYAN = "#01cdfe"             # neon cyan
 BLUE = "#2d5bff"             # electric blue
 ORANGE = "#ff9e3d"           # sunset orange
 YELLOW = "#ffe74c"           # sunset yellow
-FIELD = "#f5efe0"            # blanc cassé — the transcript field only
+FIELD = "#f1e6c8"            # creamy blanc cassé — the transcript field only
 FIELD_TEXT = "#0d8a4e"     # emerald green
 TEAL = "#01cdfe"             # legacy name (ready status = cyan)
 REC_A, REC_B = "#d81b60", "#b3124d"             # pulsing recording pair
@@ -405,30 +405,18 @@ class MiniHarness:
         # header: logo + wordmark + keycap chip
         head = tk.Frame(self.root, bg=bg_flat)
         head.pack(fill="x", padx=16, pady=(10, 6))
-        logo = tk.Canvas(head, width=34, height=34, bg=bg_flat,
+        # HY monogram: gradient-extruded letters over a cyan baseline
+        logo = tk.Canvas(head, width=48, height=34, bg=bg_flat,
                          highlightthickness=0)
-        logo.pack(side="left", padx=(0, 8))
-        # gradient sun: yellow core -> orange -> pink rim, 1px bands,
-        # scanline gaps only in the lower third
-        sun_stops = (("#ffe74c", 0.0), ("#ff9e3d", 0.5), ("#ff2e88", 1.0))
-        cx, cy, R = 17, 13, 11
-        for y in range(2 * R):
-            half = (R * R - (y - R + 0.5) ** 2) ** 0.5
-            t = y / (2 * R - 1)
-            if t > 0.62 and y % 3 == 2:
-                continue
-            logo.create_rectangle(int(cx - half), cy - R + y,
-                                  int(cx + half), cy - R + y + 1,
-                                  fill=_lerp_stops(sun_stops, t), width=0)
-        # cyan horizon + perspective grid below
-        logo.create_line(1, 25, 33, 25, fill=CYAN, width=1)
-        for k in (4, 9, 14):
-            f = k / 14.0
-            logo.create_line(17 - k * 0.4, 25, 17 - k * 1.9, 33,
-                             fill="#0a94b8")
-            logo.create_line(17 + k * 0.4, 25, 17 + k * 1.9, 33,
-                             fill="#0a94b8")
-        logo.create_line(1, 29, 33, 29, fill="#0a7a98")
+        logo.pack(side="left", padx=(0, 10))
+        hy_font = (f_disp, 16, "bold italic")
+        hy_stops = ((PINK, 0.0), (ORANGE, 0.55), (YELLOW, 1.0))
+        for i in range(5, 0, -1):
+            logo.create_text(6 + i, 3 + i, anchor="nw", text="HY",
+                             fill=_lerp_stops(hy_stops, i / 5), font=hy_font)
+        logo.create_text(6, 3, anchor="nw", text="HY", fill="#fdfdff",
+                         font=hy_font)
+        logo.create_line(4, 30, 46, 30, fill=CYAN, width=2)
         tk.Label(head, text="Hyperambient", bg=bg_flat, fg=TEXT,
                  font=(f_disp, 12, "bold")).pack(side="left")
         tk.Label(head, text="mini", bg=bg_flat, fg=FUCHSIA,
@@ -781,21 +769,6 @@ class MiniHarness:
         c.delete("all")
         w = c.winfo_width() or 400
         h = c.winfo_height() or 200
-        # watermark: pale synthwave sun over a faint horizon, bottom-right
-        sun_stops = (("#e2ead9", 0.0), ("#e6ddc0", 0.55), ("#e5c9c6", 1.0))
-        cx, cy, R = w - 95, h - 85, 64
-        for y in range(2 * R):
-            half = (R * R - (y - R + 0.5) ** 2) ** 0.5
-            t = y / (2 * R - 1)
-            if t > 0.62 and y % 4 == 3:
-                continue
-            c.create_rectangle(int(cx - half), int(cy - R + y),
-                               int(cx + half), int(cy - R + y + 1),
-                               fill=_lerp_stops(sun_stops, t), width=0)
-        c.create_line(cx - R - 16, cy + 18, cx + R + 16, cy + 18, fill="#d3ddd2")
-        for k in (18, 42, 66):
-            c.create_line(cx - k * 0.5, cy + 18, cx - k * 1.5, h, fill="#d3ddd2")
-            c.create_line(cx + k * 0.5, cy + 18, cx + k * 1.5, h, fill="#d3ddd2")
         if not self.transcript.strip():
             c.create_text(16, 14, anchor="nw", text=PLACEHOLDER,
                           fill="#93b8a2", font=(self.F["main"], 13, "italic"))
