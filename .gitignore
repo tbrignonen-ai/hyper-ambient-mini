@@ -1,6 +1,10 @@
 models/*.gguf
 bin/
+dist/
+build/
+release/
 server.log
+gui.log
 transcript.txt
 __pycache__/
 .env*

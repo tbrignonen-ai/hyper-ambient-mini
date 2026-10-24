@@ -48,3 +48,18 @@ server/host split, presence window).
 - **ZCode extra:** a user-scope `/heard` command is installed
   (`~/.zcode/commands/heard.md`). Type `/heard` in ZCode and it reads
   `transcript.txt` directly into the conversation — no clipboard needed.
+
+## Packaged app (exe)
+
+`release/HyperAmbientMini/` is the standalone app — no Python needed:
+
+| File | Role |
+|---|---|
+| `HyperAmbientMini.exe` | the app (double-click; spawns the STT server itself if needed, stops it on Quit) |
+| `bin/parakeet-server.exe` | local STT runtime (CPU, ~400 MB RAM, 0 GPU) |
+| `models/fluid-speech-mini-q2k-q4k.gguf` | 347 MB STT model |
+| `stop.bat` | hard stop (app + server) |
+
+Rebuild after code changes: `python gen_icon.py && pyinstaller --onefile --noconsole
+--name HyperAmbientMini --icon icon.ico --collect-all sounddevice app/mini_harness.py`,
+then copy `dist/HyperAmbientMini.exe` into the release folder.

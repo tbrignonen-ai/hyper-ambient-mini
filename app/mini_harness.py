@@ -19,6 +19,7 @@ import json
 import os
 import queue
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -34,8 +35,13 @@ from tkinter import ttk
 # ---------------------------------------------------------------- config ---
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+# frozen (exe) mode: model, server and transcript live next to the executable
+IS_FROZEN = getattr(sys, "frozen", False)
+BASE_DIR = os.path.dirname(sys.executable) if IS_FROZEN else ROOT
 SERVER_URL = os.environ.get("PARK_SERVER_URL", "http://127.0.0.1:8077")
-TRANSCRIPT_FILE = os.path.join(ROOT, "transcript.txt")
+TRANSCRIPT_FILE = os.path.join(BASE_DIR, "transcript.txt")
+SERVER_EXE = os.path.join(BASE_DIR, "bin", "parakeet-server.exe")
+MODEL_GGUF = os.path.join(BASE_DIR, "models", "fluid-speech-mini-q2k-q4k.gguf")
 
 SAMPLE_RATE = 16000          # what the model wants
 BLOCK_MS = 30                # audio callback granularity
@@ -328,6 +334,7 @@ class MiniHarness:
         self.copied_upto = "1.0"                  # text index already copied
         self.stats = {"n": 0, "ms": 0.0}
         self.server_ok: bool | None = None
+        self._server_proc = None
         self.device_index = None                  # None = system default
         self.hotkey_label = "F9"
         self._build_ui()
@@ -335,12 +342,42 @@ class MiniHarness:
         self._start_mic(self.device_index)
         self._start_hotkey(HOTKEY)
         self.root.after(200, self._focus_for_ptt)
-        threading.Thread(target=self._probe_server, daemon=True).start()
+        self._ensure_server()
         self._init_tray()
 
-    def _probe_server(self) -> None:
-        self.server_ok = self.client.ping()
-        self.root.after(0, self._set_status)
+    def _ensure_server(self) -> None:
+        """Use a running STT server, or spawn one silently next to the exe."""
+        def probe_spawn() -> None:
+            if self.client.ping():
+                self.server_ok = True
+                self.root.after(0, self._set_status)
+                return
+            if not (os.path.exists(SERVER_EXE) and os.path.exists(MODEL_GGUF)):
+                self.server_ok = False
+                self.root.after(0, lambda: self._set_status(
+                    "⚠ bin/parakeet-server.exe or models/ missing"))
+                return
+            try:
+                log = open(os.path.join(BASE_DIR, "server.log"), "ab")
+                self._server_proc = subprocess.Popen(
+                    [SERVER_EXE, "--model", MODEL_GGUF, "--host", "127.0.0.1",
+                     "--port", "8077", "--threads", "4"],
+                    stdout=log, stderr=log, cwd=BASE_DIR,
+                    creationflags=0x00000008)      # DETACHED_PROCESS: no console
+            except Exception as e:
+                self.server_ok = False
+                self.root.after(0, lambda: self._set_status(f"⚠ {e}"))
+                return
+            for _ in range(100):                   # up to ~30 s to load 347 MB
+                time.sleep(0.3)
+                if self.client.ping():
+                    self.server_ok = True
+                    self.root.after(0, self._set_status)
+                    return
+            self.server_ok = False
+            self.root.after(0, lambda: self._set_status(
+                "⚠ server did not come up — see server.log"))
+        threading.Thread(target=probe_spawn, daemon=True).start()
 
     def _start_hotkey(self, spec: str) -> None:
         """Global hold-to-talk: poll key state from a thread; any app in focus."""
@@ -967,6 +1004,11 @@ class MiniHarness:
             self.stream.close()
         except Exception:
             pass
+        if self._server_proc is not None:          # we spawned it, we stop it
+            try:
+                self._server_proc.terminate()
+            except Exception:
+                pass
         self.root.destroy()
 
 
