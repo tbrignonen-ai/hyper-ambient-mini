@@ -55,23 +55,26 @@ JUNK_PATTERNS = (
     "abonnez vous", "merci d avoir regarde", "subtitle", "www",
 )
 
-# --- palette: blanc cassé + synthwave (pink/cyan/amber, no purple) -------
-BG_TOP = (0xf7, 0xf2, 0xe8)  # gradient, top (warm white)
-BG_BOT = (0xee, 0xe6, 0xd6)  # gradient, bottom (cream)
-PANEL = "#fdfbf5"            # transcript field (blanc cassé)
-CHIP = "#eee4d0"             # quiet buttons / chips
-CHIP_HOVER = "#e3d6bc"
-EDGE = "#d8c9ae"             # panel outline
-TEXT = "#22222f"             # midnight
-DIM = "#6f6a5e"
-DIM2 = "#9a927f"
-TEAL = "#00a89d"             # cyan (ready)
-PINK = "#ff2e88"             # hot pink (recording / accent)
-CYAN = "#00c2b8"
-CYAN_HI = "#00d4c8"
-AMBER = "#ff9e3d"            # sunset amber (talk gradient end)
-TALK_A, TALK_B = "#ff2e88", "#ff9e3d"           # synthwave sunset gradient
+# --- palette: synthwave chrome over a blanc-cassé text field -------------
+BG_TOP = (0x1b, 0x23, 0x50)  # gradient, top (deep indigo blue)
+BG_BOT = (0x0c, 0x10, 0x2c)  # gradient, bottom (midnight navy)
+PANEL = "#101433"            # dark chrome panels (meter, combobox, menu)
+CHIP = "#1a2148"             # quiet chips
+CHIP_HOVER = "#232c5c"
+EDGE = "#2b3768"             # outlines
+TEXT = "#eef1ff"
+DIM = "#aab3e8"
+DIM2 = "#7a86c9"
+PINK = "#ff2e88"             # neon pink
+CYAN = "#01cdfe"             # neon cyan
+BLUE = "#2d5bff"             # electric blue
+ORANGE = "#ff9e3d"           # sunset orange
+YELLOW = "#ffe74c"           # sunset yellow
+FIELD = "#f5efe0"            # blanc cassé — the transcript field only
+FIELD_TEXT = "#2a2418"
+TEAL = "#01cdfe"             # legacy name (ready status = cyan)
 REC_A, REC_B = "#d81b60", "#b3124d"             # pulsing recording pair
+TALK_STOPS = (("#ff2e88", 0.0), ("#ff9e3d", 0.55), ("#ffe74c", 1.0))
 PANEL_HI, PANEL_HOVER = CHIP, CHIP_HOVER        # legacy names
 PLACEHOLDER = "hold F9, speak, release — then Ctrl+V anywhere"
 
@@ -275,6 +278,20 @@ def _make_dot_icon(size: int = 32) -> int:
     return _user32.CreateIconIndirect(byref(ii))
 
 
+def _lerp_stops(stops, t):
+    """Multi-stop hex gradient interpolation."""
+    if t <= stops[0][1]:
+        return stops[0][0]
+    for (c0, p0), (c1, p1) in zip(stops, stops[1:]):
+        if t <= p1:
+            f = (t - p0) / (p1 - p0)
+            a = tuple(int(c0[j:j + 2], 16) for j in (1, 3, 5))
+            b = tuple(int(c1[j:j + 2], 16) for j in (1, 3, 5))
+            return "#%02x%02x%02x" % tuple(
+                int(x + (y - x) * f) for x, y in zip(a, b))
+    return stops[-1][0]
+
+
 # --------------------------------------------------------------- the app ---
 class MiniHarness:
     def __init__(self) -> None:
@@ -360,44 +377,51 @@ class MiniHarness:
         self.bg = tk.Canvas(self.root, highlightthickness=0, bg=bg_flat)
         self.bg.place(x=0, y=0, relwidth=1, relheight=1)
         self.bg.bind("<Configure>", self._paint_bg)
-        self.root.option_add("*TCombobox*Listbox.background", PANEL_HI)
+        self.root.option_add("*TCombobox*Listbox.background", CHIP)
         self.root.option_add("*TCombobox*Listbox.foreground", TEXT)
-        self.root.option_add("*TCombobox*Listbox.selectBackground", PANEL_HOVER)
+        self.root.option_add("*TCombobox*Listbox.selectBackground", BLUE)
         style = ttk.Style(self.root)
         style.theme_use("clam")
-        style.configure("Dark.TCombobox", fieldbackground=PANEL, background=PANEL_HI,
+        style.configure("Dark.TCombobox", fieldbackground=PANEL, background=CHIP,
                         foreground=TEXT, arrowcolor=DIM, bordercolor=EDGE,
                         lightcolor=PANEL, darkcolor=PANEL, insertcolor=TEXT)
 
         # header: logo + wordmark + keycap chip
         head = tk.Frame(self.root, bg=bg_flat)
         head.pack(fill="x", padx=16, pady=(10, 6))
-        logo = tk.Canvas(head, width=26, height=26, bg=bg_flat,
+        logo = tk.Canvas(head, width=34, height=34, bg=bg_flat,
                          highlightthickness=0)
         logo.pack(side="left", padx=(0, 8))
-        cx, cy, r = 13, 10, 9
-        bands = ["#ff2e88", "#ff5c6e", "#ff8a4d", "#ff9e3d"]
-        for i, col in enumerate(bands):
-            y0 = cy - r + int(i * 2 * r / len(bands))
-            y1 = cy - r + int((i + 1) * 2 * r / len(bands))
-            if i >= 2 and i % 2 == 1:
-                continue                       # scanline gaps, lower half
-            dy = max(abs((y0 + y1) / 2 - cy), 0.1)
-            half = (r * r - dy * dy) ** 0.5
-            logo.create_rectangle(int(cx - half), y0, int(cx + half), y1 + 1,
-                                  fill=col, width=0)
-        logo.create_line(1, 20, 25, 20, fill=CYAN, width=2)
-        logo.create_line(5, 25, 10, 20, fill=CYAN)
-        logo.create_line(21, 25, 16, 20, fill=CYAN)
+        # gradient sun: yellow core -> orange -> pink rim, 1px bands,
+        # scanline gaps only in the lower third
+        sun_stops = (("#ffe74c", 0.0), ("#ff9e3d", 0.5), ("#ff2e88", 1.0))
+        cx, cy, R = 17, 13, 11
+        for y in range(2 * R):
+            half = (R * R - (y - R + 0.5) ** 2) ** 0.5
+            t = y / (2 * R - 1)
+            if t > 0.62 and y % 3 == 2:
+                continue
+            logo.create_rectangle(int(cx - half), cy - R + y,
+                                  int(cx + half), cy - R + y + 1,
+                                  fill=_lerp_stops(sun_stops, t), width=0)
+        # cyan horizon + perspective grid below
+        logo.create_line(1, 25, 33, 25, fill=CYAN, width=1)
+        for k in (4, 9, 14):
+            f = k / 14.0
+            logo.create_line(17 - k * 0.4, 25, 17 - k * 1.9, 33,
+                             fill="#0a94b8")
+            logo.create_line(17 + k * 0.4, 25, 17 + k * 1.9, 33,
+                             fill="#0a94b8")
+        logo.create_line(1, 29, 33, 29, fill="#0a7a98")
         tk.Label(head, text="Hyperambient", bg=bg_flat, fg=TEXT,
                  font=(f_disp, 12, "bold")).pack(side="left")
         tk.Label(head, text="mini", bg=bg_flat, fg=PINK,
                  font=(f_disp, 12, "bold italic")).pack(side="left")
         tk.Label(head, text="hold to talk", bg=bg_flat, fg=DIM2,
                  font=(f_main, 9)).pack(side="right", padx=(0, 10))
-        self.keycap = tk.Label(head, text=" F9 ", bg="#22222f", fg="#4ce0d4",
+        self.keycap = tk.Label(head, text=" F9 ", bg=PANEL, fg=CYAN,
                                padx=8, pady=2, font=(f_semi, 9),
-                               highlightthickness=1, highlightbackground="#22222f")
+                               highlightthickness=1, highlightbackground=EDGE)
         self.keycap.pack(side="right")
 
         self.status = tk.Label(self.root, text="starting…", anchor="w",
@@ -409,19 +433,20 @@ class MiniHarness:
         meter.pack(fill="x", padx=16, pady=(6, 0))
         tk.Label(meter, text="MIC", bg=bg_flat, fg=DIM2,
                  font=(f_semi, 7)).pack(side="left")
-        self.meter = tk.Canvas(meter, height=8, bg="#f3ead9", highlightthickness=0)
+        self.meter = tk.Canvas(meter, height=8, bg=PANEL, highlightthickness=0)
         self.meter.pack(fill="x", expand=True, side="left", padx=(8, 8))
         self.meter_label = tk.Label(meter, text="", bg=bg_flat, fg=DIM,
                                     font=(f_main, 8), width=8, anchor="e")
         self.meter_label.pack(side="left")
 
         self.text = tk.Text(self.root, wrap="word", font=(f_main, 13),
-                            bg=PANEL, fg=TEXT, relief="flat", insertbackground=TEXT,
+                            bg=FIELD, fg=FIELD_TEXT, relief="flat",
+                            insertbackground=FIELD_TEXT,
                             padx=14, pady=12, spacing3=4, state="disabled",
-                            highlightthickness=1, highlightbackground=EDGE,
-                            highlightcolor=PANEL_HOVER)
+                            highlightthickness=1, highlightbackground="#1d5f70",
+                            highlightcolor=CYAN)
         self.text.pack(fill="both", expand=True, padx=16, pady=8)
-        self.text.tag_configure("placeholder", foreground="#b3a98f",
+        self.text.tag_configure("placeholder", foreground="#a89b7c",
                                 font=(f_main, 13, "italic"))
 
         # talk button: synthwave sunset gradient on a canvas
@@ -444,28 +469,25 @@ class MiniHarness:
         bar = tk.Frame(self.root, bg=bg_flat)
         bar.pack(fill="x", padx=16, pady=(10, 0))
 
-        def btn(label, cmd, accent=False):
+        def btn(label, cmd, bg, hover, fg="#ffffff"):
             b = tk.Button(bar, text=label, command=cmd, relief="flat",
-                          bg=CYAN if accent else PANEL_HI,
-                          fg="#ffffff" if accent else TEXT,
-                          activebackground=CYAN_HI if accent else PANEL_HOVER,
-                          activeforeground="#ffffff" if accent else "#ffffff",
-                          borderwidth=0, font=(f_semi, 9), padx=14, pady=6,
-                          cursor="hand2")
-            b.bind("<Enter>", lambda e: b.configure(
-                bg=CYAN_HI if accent else PANEL_HOVER))
-            b.bind("<Leave>", lambda e: b.configure(
-                bg=CYAN if accent else PANEL_HI))
+                          bg=bg, fg=fg, activebackground=hover,
+                          activeforeground=fg, borderwidth=0,
+                          font=(f_semi, 9), padx=14, pady=6, cursor="hand2")
+            b.bind("<Enter>", lambda e: b.configure(bg=hover))
+            b.bind("<Leave>", lambda e: b.configure(bg=bg))
             return b
 
-        btn("📋 Copy", self.copy_all, accent=True).pack(side="left")
-        btn("copy new", self.copy_new).pack(side="left", padx=(6, 0))
-        btn("↵ newline", self.insert_newline).pack(side="left", padx=(6, 0))
-        btn("clear", self.clear_text).pack(side="left", padx=(6, 0))
+        btn("📋 Copy", self.copy_all, PINK, "#ff4d9d").pack(side="left")
+        btn("copy new", self.copy_new, BLUE, "#4d6dff").pack(side="left", padx=(6, 0))
+        btn("↵ newline", self.insert_newline, CYAN, "#33dcff",
+            fg="#0c102c").pack(side="left", padx=(6, 0))
+        btn("clear", self.clear_text, YELLOW, "#fff17a",
+            fg="#0c102c").pack(side="left", padx=(6, 0))
 
         self.autocopy = tk.BooleanVar(value=True)
         tk.Checkbutton(bar, text="auto-copy", variable=self.autocopy,
-                       bg=bg_flat, fg=DIM, selectcolor="#fdfbf5",
+                       bg=bg_flat, fg=DIM, selectcolor=CHIP,
                        activebackground=bg_flat, activeforeground=TEXT,
                        font=(f_main, 9)).pack(side="right")
 
@@ -503,21 +525,19 @@ class MiniHarness:
         h = int(c["height"])
         if self.ptt_active:
             hi = int(time.time() * 4) % 2 == 0
-            a, b = (REC_A, "#ff5c3d") if hi else (REC_B, "#d94327")
+            stops = ((REC_A, 0.0), ("#ff5c3d", 0.55), ("#ffe74c", 1.0)) if hi \
+                else ((REC_B, 0.0), ("#d94327", 0.55), ("#e0c832", 1.0))
             label = "●   Listening… release to send"
         elif self._talk_hovered:
-            a, b = "#ff4d9d", "#ffb14d"
+            stops = (("#ff4d9d", 0.0), ("#ffb14d", 0.55), ("#fff17a", 1.0))
             label = "⏺   Hold F9 and speak  —  release to send"
         else:
-            a, b = TALK_A, TALK_B
+            stops = TALK_STOPS
             label = "⏺   Hold F9 and speak  —  release to send"
-        steps = 40
+        steps = 48
         for i in range(steps):
             t = i / (steps - 1)
-            pa = tuple(int(a[j:j + 2], 16) for j in (1, 3, 5))
-            pb = tuple(int(b[j:j + 2], 16) for j in (1, 3, 5))
-            col = "#%02x%02x%02x" % tuple(
-                int(x + (y - x) * t) for x, y in zip(pa, pb))
+            col = _lerp_stops(stops, t)
             x0 = int(w * i / steps)
             c.create_rectangle(x0, 0, int(w * (i + 1) / steps) + 1, h,
                                fill=col, width=0)
@@ -720,12 +740,13 @@ class MiniHarness:
             return
         self.meter.delete("all")
         frac = min(self.last_level / METER_RANGE, 1.0)
-        color = "#00a89d" if frac < 0.55 else "#d98e04" if frac < 0.85 else "#e0245e"
+        color = ("#01cdfe" if frac < 0.4 else "#ffe74c" if frac < 0.7
+                 else "#ff9e3d" if frac < 0.9 else "#ff2e88")
         if frac > 0.01:
             self.meter.create_rectangle(0, 0, int(w * frac), 8, fill=color, width=0)
         silent = self.zero_blocks > 100
         hint = "SILENT — check device / privacy" if silent else f"{self.last_level:.0f}"
-        self.meter_label.configure(text=hint, fg="#e0245e" if silent else DIM)
+        self.meter_label.configure(text=hint, fg="#ff5c8a" if silent else DIM)
 
     def _append(self, s: str) -> None:
         self.text.configure(state="normal")
@@ -859,8 +880,8 @@ class MiniHarness:
         self.root.withdraw()
 
     def _show_tray_menu(self) -> None:
-        m = tk.Menu(self.root, tearoff=0, bg="#fdfbf5", fg=TEXT,
-                    activebackground=CHIP_HOVER, activeforeground=TEXT,
+        m = tk.Menu(self.root, tearoff=0, bg=PANEL, fg=TEXT,
+                    activebackground=BLUE, activeforeground="#ffffff",
                     font=(self.F["main"], 9))
         m.add_command(label="Show / hide", command=self._tray_toggle)
         m.add_separator()
