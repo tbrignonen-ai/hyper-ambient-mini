@@ -33,3 +33,13 @@ Fluid Speech Mini by FluidVoice (CC BY 4.0), built on NVIDIA Parakeet TDT 0.6B v
 and Moondream Parakeet Ultra (CC BY 4.0). Runtime: parakeet.cpp (MIT).
 Inspired by the architecture of hyper-ambient (energy VAD before inference,
 server/host split, presence window).
+
+## Pasting into ZCode / DeepSeek desktop
+
+- **Anywhere (DeepSeek app etc.):** the window is always-on-top with `auto-copy`
+  on by default — after each utterance the full current text is already in the
+  clipboard; just Ctrl+V in the target app. `Copy new` copies only what was
+  said since your last copy.
+- **ZCode extra:** a user-scope `/heard` command is installed
+  (`~/.zcode/commands/heard.md`). Type `/heard` in ZCode and it reads
+  `transcript.txt` directly into the conversation — no clipboard needed.
