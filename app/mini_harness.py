@@ -25,6 +25,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import zipfile
 import wave
 
 import sounddevice as sd
@@ -37,11 +38,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 # frozen (exe) mode: model, server and transcript live next to the executable
 IS_FROZEN = getattr(sys, "frozen", False)
-BASE_DIR = os.path.dirname(sys.executable) if IS_FROZEN else ROOT
+BASE_DIR = (os.environ.get("HAM_DATA_DIR")
+            or (os.path.dirname(sys.executable) if IS_FROZEN else ROOT))
 SERVER_URL = os.environ.get("PARK_SERVER_URL", "http://127.0.0.1:8077")
 TRANSCRIPT_FILE = os.path.join(BASE_DIR, "transcript.txt")
 SERVER_EXE = os.path.join(BASE_DIR, "bin", "parakeet-server.exe")
 MODEL_GGUF = os.path.join(BASE_DIR, "models", "fluid-speech-mini-q2k-q4k.gguf")
+# first-run downloads: the model from its canonical HF home, the STT runtime
+# from the parakeet.cpp release; both public, no auth
+MODEL_URL = ("https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-gguf/"
+             "resolve/main/fluid-speech-mini-q2k-q4k.gguf")
+SERVER_ZIP_URL = ("https://github.com/mudler/parakeet.cpp/releases/download/"
+                  "v0.6.1/parakeet-v0.6.1-bin-win-cpu-x64.zip")
 
 SAMPLE_RATE = 16000          # what the model wants
 BLOCK_MS = 30                # audio callback granularity
@@ -335,6 +343,7 @@ class MiniHarness:
         self.stats = {"n": 0, "ms": 0.0}
         self.server_ok: bool | None = None
         self._server_proc = None
+        self._progress = ""
         self.device_index = None                  # None = system default
         self.hotkey_label = "F9"
         self._build_ui()
@@ -354,8 +363,7 @@ class MiniHarness:
                 return
             if not (os.path.exists(SERVER_EXE) and os.path.exists(MODEL_GGUF)):
                 self.server_ok = False
-                self.root.after(0, lambda: self._set_status(
-                    "⚠ bin/parakeet-server.exe or models/ missing"))
+                self._bootstrap_files()      # first run: fetch what's missing
                 return
             try:
                 log = open(os.path.join(BASE_DIR, "server.log"), "ab")
@@ -378,6 +386,56 @@ class MiniHarness:
             self.root.after(0, lambda: self._set_status(
                 "⚠ server did not come up — see server.log"))
         threading.Thread(target=probe_spawn, daemon=True).start()
+
+    def _bootstrap_files(self) -> None:
+        """First run: fetch the STT server (2 MB) and model (347 MB), once."""
+        def worker() -> None:
+            try:
+                if not os.path.exists(SERVER_EXE):
+                    self._set_progress("downloading STT server…")
+                    zip_path = SERVER_EXE + ".zip"
+                    self._download(SERVER_ZIP_URL, zip_path)
+                    os.makedirs(os.path.dirname(SERVER_EXE), exist_ok=True)
+                    with zipfile.ZipFile(zip_path) as z:
+                        member = next(n for n in z.namelist()
+                                      if n.endswith("parakeet-server.exe"))
+                        with z.open(member) as s, open(SERVER_EXE, "wb") as d:
+                            d.write(s.read())
+                    os.remove(zip_path)
+                if not os.path.exists(MODEL_GGUF):
+                    self._download(MODEL_URL, MODEL_GGUF)
+                self._set_progress("")
+                self._ensure_server()        # files are there now
+            except Exception as e:
+                self._set_progress(f"⚠ download failed: {e}")
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _set_progress(self, msg: str) -> None:
+        self._progress = msg
+        try:
+            self.root.after(0, self._set_status)
+        except Exception:
+            pass
+
+    def _download(self, url: str, dest: str) -> None:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        part = dest + ".part"
+        req = urllib.request.Request(url, headers={"User-Agent": "hyperambient-mini"})
+        with urllib.request.urlopen(req, timeout=60) as r, open(part, "wb") as f:
+            total = int(r.headers.get("Content-Length") or 0)
+            got, last = 0, -1
+            while True:
+                chunk = r.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+                got += len(chunk)
+                if total:
+                    pct = int(got * 100 / total)
+                    if pct != last and pct % 4 == 0:
+                        last = pct
+                        self._set_progress(f"downloading model… {pct}%")
+        os.replace(part, dest)
 
     def _start_hotkey(self, spec: str) -> None:
         """Global hold-to-talk: poll key state from a thread; any app in focus."""
@@ -677,6 +735,9 @@ class MiniHarness:
     def ptt_start(self) -> None:
         if self.ptt_active or not self.mic_alive:
             return
+        if self.server_ok is not True:
+            self._set_status("· server not ready yet — one moment")
+            return
         self.ptt_active = True
         # one activation = one text: previous utterance and clipboard go away
         self.clear_text()
@@ -841,8 +902,10 @@ class MiniHarness:
             state = f"⏺ push-to-talk ready · hold {self.hotkey_label} anywhere"
             color = TEAL
         n, ms = self.stats["n"], self.stats["ms"]
+        if self._progress:
+            extra = (extra + "  " if extra else "") + "· " + self._progress
         srv = "server ok" if self.server_ok else (
-            "server DOWN — run start.bat" if self.server_ok is False else "checking server…")
+            "server DOWN" if self.server_ok is False else "checking server…")
         self.status.configure(
             text=f"{state}   ·   {srv}   ·   {n} utterances, last {ms:.0f} ms   {extra}",
             fg=color)

@@ -1,65 +1,58 @@
 # hyperambient-mini
 
 Light version of [hyper-ambient](https://github.com/tbrignonen-ai/hyper-ambient):
-only the ears. Speak, watch the text appear, click copy, paste anywhere —
-ZCode, the DeepSeek desktop app, anything.
+only the ears. **Hold F9, speak, release — the text is in your clipboard.**
+Paste anywhere: ZCode, the DeepSeek desktop app, anything.
 
-- **STT model:** [Fluid Speech Mini](https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-gguf) (GGUF, released 2026-10-13) — fine-tuned Parakeet TDT 0.6B, 347 MB, 4.53 % WER on the Open ASR Leaderboard sets (better than whisper-large-v3), and specifically robust when another voice is talking in the room. English-focused; the 25-language vocabulary carries usable French (verified on a real clip), but French is not trained/measured — treat it as a bonus.
-- **Runtime:** [parakeet.cpp](https://github.com/mudler/parakeet.cpp) v0.6.1 server, **CPU only, 4 threads → 0 GB VRAM, ~390 MB RAM**. Safe next to a running training job.
-- **GUI:** tkinter + sounddevice. Always-on-top window, live transcript, `Copy new` / `Copy all`, auto-copy after each utterance, pause button. Mirrors everything to `transcript.txt`.
+Local from end to end: your voice never leaves the machine. CPU-only
+(~400 MB RAM, **0 GPU**), safe to run next to a training job.
 
-## Use
+## Quickstart (Windows)
 
-1. `start.bat` (starts the server minimized if needed, then the window).
-2. **Push-to-talk (default): hold F9 anywhere** — ZCode, the DeepSeek app,
-   anything — speak, release. Or hold the on-screen TALK button / Space when
-   the window is focused. One activation = one text: the box and clipboard are
-   wiped when you press, so after release you paste exactly what you just said.
-   (Change the key: `set HAM_HOTKEY=f8` or `ctrl-alt-space` before launching.)
-3. Paste (Ctrl+V) into ZCode / the DeepSeek app. With auto-copy on, the whole
-   current text is already in the clipboard after every utterance.
-   Push-to-talk only (no VAD); the level meter shows the live mic level.
+1. Download **`HyperAmbientMini.exe`** from
+   [Releases](https://github.com/tbrignonen-ai/hyper-ambient-mini/releases).
+2. Double-click. **First run downloads what it needs** — the STT runtime
+   (2 MB) and the model (347 MB), once — with progress shown in the window.
+3. Hold **F9** anywhere, speak, release → **Ctrl+V** in whatever you were
+   typing. One activation = one text: the box and clipboard reset on each
+   press, so you always paste exactly what you just said.
 
-Python deps: `pip install sounddevice` (only one; everything else is stdlib).
-
-## Files
-
-| Path | Role |
+| | |
 |---|---|
-| `start.bat` | launcher (server + GUI) |
-| `app/mini_harness.py` | the whole app; `python app/mini_harness.py --selftest` checks the server round-trip without the GUI |
-| `models/` | GGUF weights (gitignored, 347 MB) |
-| `bin/` | parakeet.cpp v0.6.1 win-cpu binaries (gitignored) |
-| `transcript.txt` | rolling mirror of everything heard (gitignored) |
+| **F9** (hold) | talk, from any app |
+| **Ctrl+Alt+H** | show / hide the window |
+| minimize | hides to the tray (pink dot) |
+| close (X) or tray → Quit | quits app + server |
+
+English-focused; French comes out usable but is not trained or measured.
+
+## Run from source
+
+```sh
+git clone https://github.com/tbrignonen-ai/hyper-ambient-mini
+cd hyper-ambient-mini
+pip install -r requirements.txt     # sounddevice only
+python app/mini_harness.py          # same first-run download as the exe
+```
+
+`python app/mini_harness.py --selftest` checks the server round-trip without
+the GUI.
+
+## What's inside
+
+| Piece | What |
+|---|---|
+| **Ears** | [Fluid Speech Mini](https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-gguf) — fine-tuned Parakeet TDT 0.6B, 347 MB, 4.53 % WER on the Open ASR Leaderboard sets (better than whisper-large-v3), robust when another voice is talking in the room |
+| **Runtime** | [parakeet.cpp](https://github.com/mudler/parakeet.cpp) v0.6.1 server, CPU build — 0 GB VRAM |
+| **App** | tkinter + sounddevice; energy meter, push-to-talk only (no VAD), junk-hallucination filter, tray icon, clipboard auto-copy |
+| ZCode extra | a user-scope `/heard` slash command reads `transcript.txt` straight into a ZCode conversation |
+
+Rebuild the exe: `python gen_icon.py && pyinstaller --onefile --noconsole
+--name HyperAmbientMini --icon icon.ico --collect-all sounddevice app/mini_harness.py`
 
 ## Attribution
 
 Fluid Speech Mini by FluidVoice (CC BY 4.0), built on NVIDIA Parakeet TDT 0.6B v3
 and Moondream Parakeet Ultra (CC BY 4.0). Runtime: parakeet.cpp (MIT).
-Inspired by the architecture of hyper-ambient (energy VAD before inference,
-server/host split, presence window).
-
-## Pasting into ZCode / DeepSeek desktop
-
-- **Anywhere (DeepSeek app etc.):** the window is always-on-top with `auto-copy`
-  on by default — after each utterance the full current text is already in the
-  clipboard; just Ctrl+V in the target app. `Copy new` copies only what was
-  said since your last copy.
-- **ZCode extra:** a user-scope `/heard` command is installed
-  (`~/.zcode/commands/heard.md`). Type `/heard` in ZCode and it reads
-  `transcript.txt` directly into the conversation — no clipboard needed.
-
-## Packaged app (exe)
-
-`release/HyperAmbientMini/` is the standalone app — no Python needed:
-
-| File | Role |
-|---|---|
-| `HyperAmbientMini.exe` | the app (double-click; spawns the STT server itself if needed, stops it on Quit) |
-| `bin/parakeet-server.exe` | local STT runtime (CPU, ~400 MB RAM, 0 GPU) |
-| `models/fluid-speech-mini-q2k-q4k.gguf` | 347 MB STT model |
-| `stop.bat` | hard stop (app + server) |
-
-Rebuild after code changes: `python gen_icon.py && pyinstaller --onefile --noconsole
---name HyperAmbientMini --icon icon.ico --collect-all sounddevice app/mini_harness.py`,
-then copy `dist/HyperAmbientMini.exe` into the release folder.
+This repo's code: Apache 2.0. Inspired by the architecture of hyper-ambient
+(energy VAD before inference, server/host split, presence window).

@@ -1,0 +1,4 @@
+progress tail: '⚠ download failed: patched() takes 0 positional arguments but 1 was given'
+elapsed: 62s  bootstrap complete: False
+C:/Users/thoma/AppData/Local/Temp/ham_test\bin\parakeet-server.exe 1.8 MB
+C:/Users/thoma/AppData/Local/Temp/ham_test\models\fluid-speech-mini-q2k-q4k.gguf 347.4 MB
