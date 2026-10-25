@@ -316,15 +316,19 @@ def _lerp_stops(stops, t):
 # --------------------------------------------------------------- the app ---
 class MiniHarness:
     def __init__(self) -> None:
-        # single instance: a second copy would fight over F9 and the clipboard
+        # single instance: a second copy would fight over F9 and the clipboard.
+        # A second launch politely asks the running one to show itself.
         self._lock = socket.socket()
         try:
             self._lock.bind(("127.0.0.1", 8079))
+            self._lock.listen(1)
+            threading.Thread(target=self._listen_for_show, daemon=True).start()
         except OSError:
-            _user32.MessageBoxW(
-                None, "hyperambient-mini is already running.\n"
-                      "Look for the red dot in the Windows tray.",
-                "hyperambient-mini", 0x30)
+            try:
+                with socket.create_connection(("127.0.0.1", 8079), timeout=2) as s:
+                    s.sendall(b"show")
+            except OSError:
+                pass
             sys.exit(0)
         self.client = ParakeetClient(SERVER_URL)
         self.root = tk.Tk()
@@ -466,7 +470,7 @@ class MiniHarness:
                 if sdown != shown:
                     shown = sdown
                     if sdown:
-                        self.ui_q.put(("show", True))
+                        self.ui_q.put(("toggle", True))
         threading.Thread(target=poll, daemon=True).start()
 
     # ---------------- UI ----------------
@@ -804,8 +808,10 @@ class MiniHarness:
                 kind, payload = self.ui_q.get_nowait()
                 if kind == "ptt":
                     (self.ptt_start if payload else self._ptt_release)()
-                elif kind == "show":
+                elif kind == "toggle":
                     self._window_toggle()
+                elif kind == "show":
+                    self._show_window()
         except queue.Empty:
             pass
         tq = getattr(self, "_tray_events", None)
@@ -1005,13 +1011,29 @@ class MiniHarness:
             pass
         return _user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
-    def _window_toggle(self) -> None:
+    def _listen_for_show(self) -> None:
+        """Second launches knock here: raise the window, never hide it."""
+        while True:
+            try:
+                conn, _ = self._lock.accept()
+                with conn:
+                    data = conn.recv(16)
+                if data.strip() == b"show":
+                    self.ui_q.put(("show", True))
+            except OSError:
+                return
+
+    def _show_window(self) -> None:
         if self.root.state() == "withdrawn":
             self.root.deiconify()
             self.root.state("normal")       # deiconify alone may restore iconic
             self.root.attributes("-topmost", True)
-            self.root.lift()
-            self.root.focus_force()
+        self.root.lift()
+        self.root.focus_force()
+
+    def _window_toggle(self) -> None:
+        if self.root.state() == "withdrawn":
+            self._show_window()
         else:
             self._hide_to_tray()
 
