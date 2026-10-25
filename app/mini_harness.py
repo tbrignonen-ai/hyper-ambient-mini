@@ -483,8 +483,9 @@ class MiniHarness:
         self.F = {"main": f_main, "disp": f_disp, "semi": f_semi}
 
         self.root.title("hyperambient-mini")
-        self.root.geometry("560x380")
-        self.root.minsize(504, 342)
+        # 576x561 keeps the whole bottom menu visible under Windows DPI scaling
+        self.root.geometry("576x561")
+        self.root.minsize(500, 540)
         self.root.attributes("-topmost", True)
         bg_flat = "#%02x%02x%02x" % BG_BOT
         self.root.configure(bg=bg_flat)
